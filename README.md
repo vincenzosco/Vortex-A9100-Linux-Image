@@ -49,7 +49,7 @@ sudo dnf install -y @development-tools bison flex bc wget tar gzip \
 ### Clone and Build
 ```bash
 # Clone the build system
-git clone <your-repo-url> vortex-a9100-build
+git clone https://github.com/vincenzosco/Vortex-A9100-Linux-Image vortex-a9100-build
 cd vortex-a9100-build
 
 # Start the build
