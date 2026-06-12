@@ -5,7 +5,6 @@
 
 [![GitHub](https://img.shields.io/badge/GitHub-Vortex--A9100--Linux--Image-blue?style=flat&logo=github)](https://github.com/vincenzosco/Vortex-A9100-Linux-Image)
 
-**Repository:** [https://github.com/vincenzosco/Vortex-A9100-Linux-Image](https://github.com/vincenzosco/Vortex-A9100-Linux-Image)
 
 ## Features
 
