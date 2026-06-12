@@ -69,6 +69,11 @@ sudo dnf install -y @development-tools bison flex bc wget tar gzip \
 
 ```bash
 cd Vortex-A9100-Linux-Image
+=======
+# Clone the build system
+git clone https://github.com/vincenzosco/Vortex-A9100-Linux-Image vortex-a9100-build
+cd vortex-a9100-build
+>>>>>>> 0cb36d667f23b54d51637d997542928fb87964ea
 
 # Full build (downloads Buildroot + sources, cross-compiles everything)
 ./build.sh
@@ -357,7 +362,46 @@ Edit `board/dmp/vortex86_a9100/overlay/etc/init.d/S60xorg`:
 # Change:
 AUTOSTART="no"
 # To:
+<<<<<<< HEAD
 AUTOSTART="yes"
+=======
+#   AUTOSTART="yes"
+```
+
+## Architecture Details
+
+### Boot Process
+1. BIOS loads GRUB from MBR
+2. GRUB loads Linux kernel (`/boot/bzImage`)
+3. Kernel boots with: `console=ttyS0,115200n8 console=tty0 root=/dev/sda1`
+4. BusyBox init runs `/etc/init.d/rcS`
+5. System services start: networking, SSH, optionally X11
+6. Login prompt on serial console and VGA
+
+### Partition Layout (512MB disk)
+| Partition | Size | Type | Mount | Label |
+|-----------|------|------|-------|-------|
+| p1 (boot) | 50MB | ext2 | `/boot` | `vortex-boot` |
+| p2 (root) | ~462MB | ext4 | `/` | `vortex-root` |
+
+### Software Stack
+```
+┌──────────────────────────────────────────────┐
+│  Openbox Window Manager (GUI)                │
+├──────────────────────────────────────────────┤
+│  X.Org Server (VESA/fbdev drivers)           │
+├──────────────────────────────────────────────┤
+│  opkg (Package Manager) / SSH / Networking   │
+├──────────────────────────────────────────────┤
+│  BusyBox (init, shell, coreutils, udhcpc)    │
+├──────────────────────────────────────────────┤
+│  musl libc (lightweight C library)           │
+├──────────────────────────────────────────────┤
+│  Linux 5.10 LTS (patched for i486/CMPXCHG8B) │
+├──────────────────────────────────────────────┤
+│  GRUB Bootloader (i386-pc)                   │
+└──────────────────────────────────────────────┘
+>>>>>>> 0cb36d667f23b54d51637d997542928fb87964ea
 ```
 
 ## Troubleshooting
