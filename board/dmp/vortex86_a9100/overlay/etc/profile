@@ -1,0 +1,30 @@
+# /etc/profile - System-wide profile for Vortex86 A9100
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export EDITOR="nano"
+export TERM="linux"
+
+# Set a minimal prompt showing hostname and path
+export PS1='\h:\w\$ '
+
+# Set locale (minimal - musl has limited locale support)
+export LANG="C"
+export LC_ALL="C"
+
+# Aliases for convenience
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls -CF'
+alias ..='cd ..'
+alias cls='clear'
+alias h='history'
+
+# Welcome message on login
+if [ -x /usr/bin/lsb_release ]; then
+    lsb_release -a 2>/dev/null
+fi
+
+echo "Vortex86 A9100 Embedded Linux"
+echo "  Type 'startx' to launch the GUI (JWM window manager)"
+echo "  Type 'opkg --help' for package manager usage"
+echo "  Type 'htop' for system monitor"

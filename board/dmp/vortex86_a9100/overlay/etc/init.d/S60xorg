@@ -1,0 +1,43 @@
+#!/bin/sh
+# /etc/init.d/S60xorg - X11 display server startup
+#
+# This script can start Xorg automatically on boot.
+# By default, X11 is NOT auto-started to conserve memory.
+# Uncomment the AUTOSTART line below to enable.
+#
+# Alternatively, log in and type: startx
+
+# AUTOSTART="yes"
+AUTOSTART="no"
+
+case "$1" in
+    start)
+        if [ "$AUTOSTART" = "yes" ]; then
+            echo "Starting X11 display server..."
+            if [ -x /usr/bin/startx ]; then
+                # Wait for network and system to settle
+                sleep 2
+                # Launch X11 on tty1 as root (or switch to a dedicated user)
+                # Using startx with JWM as the window manager
+                su -c "startx" root &
+            fi
+        else
+            echo "X11 auto-start disabled. Log in and type 'startx' to launch the GUI."
+        fi
+        ;;
+    stop)
+        echo "Stopping X11..."
+        killall Xorg 2>/dev/null
+        killall jwm 2>/dev/null
+        ;;
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+exit $?

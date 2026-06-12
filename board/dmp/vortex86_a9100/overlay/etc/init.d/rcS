@@ -1,0 +1,59 @@
+#!/bin/sh
+# /etc/init.d/rcS - System initialization for Vortex86 A9100
+
+echo "========================================"
+echo "  Vortex86 A9100 Embedded Linux"
+echo "  Starting system initialization..."
+echo "========================================"
+
+# Mount filesystems
+mount -t proc none /proc
+mount -t sysfs none /sys
+mount -t devtmpfs none /dev
+
+# Create required device nodes if devtmpfs not available
+mknod /dev/null c 1 3 2>/dev/null
+mknod /dev/console c 5 1 2>/dev/null
+
+# Start udev/mdev for hotplug
+echo /sbin/mdev > /proc/sys/kernel/hotplug
+/sbin/mdev -s
+
+# Create additional directories
+mkdir -p /var/lib/opkg
+mkdir -p /var/log
+mkdir -p /var/run
+mkdir -p /var/tmp
+mkdir -p /var/lock
+
+# Set hostname
+hostname vortex-a9100
+
+# Configure loopback network
+/sbin/ifconfig lo 127.0.0.1 up
+
+# Set up networking (dhcp)
+echo "Starting network..."
+/sbin/ifconfig eth0 up 2>/dev/null
+/sbin/udhcpc -i eth0 -b -q 2>/dev/null &
+
+# Set timezone
+export TZ="UTC"
+
+# Set up kernel parameters
+echo 1024 > /proc/sys/net/core/rmem_default 2>/dev/null
+echo 1024 > /proc/sys/net/core/wmem_default 2>/dev/null
+
+# Run all S* init scripts
+for i in /etc/init.d/S*; do
+    if [ -x "$i" ]; then
+        echo "Running: $i"
+        "$i" start
+    fi
+done
+
+echo "========================================"
+echo "  System ready!"
+echo "  Login on ttyS0 (115200 baud) or VGA"
+echo "  Type 'startx' to launch GUI"
+echo "========================================"

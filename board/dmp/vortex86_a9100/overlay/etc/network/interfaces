@@ -1,0 +1,15 @@
+# /etc/network/interfaces - Network configuration for Vortex86 A9100
+
+# Loopback
+auto lo
+iface lo inet loopback
+
+# Ethernet (DHCP by default)
+auto eth0
+iface eth0 inet dhcp
+    # Optionally set static IP:
+    # iface eth0 inet static
+    #     address 192.168.1.100
+    #     netmask 255.255.255.0
+    #     gateway 192.168.1.1
+    #     dns-nameservers 8.8.8.8 1.1.1.1

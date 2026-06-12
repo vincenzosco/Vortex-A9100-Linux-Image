@@ -1,0 +1,32 @@
+#!/bin/sh
+# /etc/init.d/S50sshd - SSH server startup
+#
+case "$1" in
+    start)
+        echo "Starting SSH server..."
+        if [ -x /usr/sbin/sshd ]; then
+            # Generate host keys if not present
+            if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+                /usr/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" 2>/dev/null
+            fi
+            if [ ! -f /etc/ssh/ssh_host_dsa_key ]; then
+                /usr/bin/ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key -N "" 2>/dev/null
+            fi
+            /usr/sbin/sshd
+        fi
+        ;;
+    stop)
+        echo "Stopping SSH server..."
+        killall sshd 2>/dev/null
+        ;;
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+exit $?

@@ -1,0 +1,354 @@
+#!/bin/bash
+#===========================================================
+# build.sh - Vortex86 A9100 Custom Linux Image Builder
+#
+# This script builds a complete bootable Linux image for
+# the DM&P Vortex86 A9100 (i486-compatible) SoC.
+#
+# Requirements:
+#   - Linux environment (native or WSL2)
+#   - Build dependencies (gcc, make, bison, flex, etc.)
+#   - sudo access (for loop device management in post-image)
+#   - ~5GB free disk space
+#
+# Usage:
+#   ./build.sh              # Full build
+#   ./build.sh clean        # Clean build artifacts
+#   ./build.sh menuconfig   # Configure Buildroot
+#   ./build.sh linux-config # Configure Linux kernel
+#   ./build.sh help         # Show this help
+#===========================================================
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILDROOT_DIR="${SCRIPT_DIR}/buildroot"
+OUTPUT_DIR="${SCRIPT_DIR}/output"
+BUILDROOT_VERSION="2023.02.14"  # Last version with reliable i486 support
+BUILDROOT_URL="https://buildroot.org/downloads/buildroot-${BUILDROOT_VERSION}.tar.gz"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Functions
+info()  { echo -e "${GREEN}[INFO]${NC}  $1"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+step()  { echo -e "${BLUE}[STEP]${NC}  $1"; }
+
+# Show help
+show_help() {
+    cat << EOF
+Vortex86 A9100 Linux Image Builder
+
+Usage: ./build.sh [command]
+
+Commands:
+  (none)       Full build (download, configure, compile, package)
+  clean        Remove all build artifacts
+  distclean    Remove everything including downloaded sources
+  menuconfig   Open Buildroot configuration menu
+  linux-config Open Linux kernel configuration menu
+  busybox-config Open BusyBox configuration menu
+  help         Show this help
+
+Steps performed by full build:
+  1. Check system dependencies
+  2. Download Buildroot (${BUILDROOT_VERSION})
+  3. Apply custom board configuration
+  4. Cross-compile toolchain, kernel, and all packages
+  5. Create bootable disk image with GRUB
+
+Output:
+  ${OUTPUT_DIR}/images/vortex86_a9100.img  - Bootable disk image
+  ${OUTPUT_DIR}/images/bzImage             - Linux kernel
+  ${OUTPUT_DIR}/images/rootfs.ext2         - Root filesystem image
+  ${OUTPUT_DIR}/images/rootfs.tar          - Root filesystem tarball
+EOF
+}
+
+# Step 1: Check system dependencies
+check_dependencies() {
+    step "Checking system dependencies..."
+
+    local missing=""
+    local cmds=(
+        "gcc" "g++" "make" "bison" "flex" "bc"
+        "wget" "tar" "gzip" "bzip2" "xz" "patch"
+        "sed" "awk" "find" "file" "cpio" "unzip"
+        "rsync" "which" "python3"
+    )
+
+    for cmd in "${cmds[@]}"; do
+        if ! which "$cmd" >/dev/null 2>&1; then
+            missing="$missing $cmd"
+        fi
+    done
+
+    # Check for QEMU (useful for testing but not required)
+    if which qemu-system-i386 >/dev/null 2>&1; then
+        info "QEMU found - you can test the image with: qemu-system-i386 -hda output/images/vortex86_a9100.img"
+    fi
+
+    if [ -n "$missing" ]; then
+        error "Missing required dependencies:$missing"
+        echo "  On Debian/Ubuntu:"
+        echo "    sudo apt-get install -y build-essential bison flex bc wget tar gzip bzip2 xz-utils \\"
+        echo "      patch sed awk findutils file cpio unzip rsync python3"
+        echo "  On Arch Linux:"
+        echo "    sudo pacman -S --needed base-devel bison flex bc wget tar gzip bzip2 xz patch \\"
+        echo "      sed awk findutils file cpio unzip rsync python"
+        exit 1
+    fi
+
+    info "All dependencies satisfied!"
+}
+
+# Step 2: Download Buildroot
+download_buildroot() {
+    step "Downloading Buildroot ${BUILDROOT_VERSION}..."
+
+    if [ -d "${BUILDROOT_DIR}" ]; then
+        info "Buildroot directory already exists. Skipping download."
+        info "  To re-download, run: rm -rf ${BUILDROOT_DIR} && ./build.sh"
+        return
+    fi
+
+    local tarball="/tmp/buildroot-${BUILDROOT_VERSION}.tar.gz"
+
+    if [ ! -f "$tarball" ]; then
+        info "Downloading from ${BUILDROOT_URL}..."
+        wget -O "$tarball" "${BUILDROOT_URL}" || {
+            error "Failed to download Buildroot. Check internet connection."
+            exit 1
+        }
+    fi
+
+    info "Extracting..."
+    tar xf "$tarball" -C "${SCRIPT_DIR}"
+    mv "${SCRIPT_DIR}/buildroot-${BUILDROOT_VERSION}" "${BUILDROOT_DIR}"
+    info "Buildroot extracted to ${BUILDROOT_DIR}"
+}
+
+# Step 3: Apply custom board configuration
+apply_board_config() {
+    step "Applying Vortex86 A9100 board configuration..."
+
+    local config_src="${SCRIPT_DIR}/configs/vortex86_a9100_defconfig"
+    local config_dst="${BUILDROOT_DIR}/configs/vortex86_a9100_defconfig"
+
+    if [ ! -f "$config_src" ]; then
+        error "Board configuration not found: ${config_src}"
+        exit 1
+    fi
+
+    cp "$config_src" "$config_dst"
+
+    # Create board directory symlink
+    local board_src="${SCRIPT_DIR}/board/dmp"
+    local board_dst="${BUILDROOT_DIR}/board/dmp"
+
+    if [ -d "$board_dst" ]; then
+        rm -rf "$board_dst"
+    fi
+
+    mkdir -p "${BUILDROOT_DIR}/board"
+    cp -r "$board_src" "$board_dst"
+
+    # Patches are in board/dmp/vortex86_a9100/patches/ and referenced
+    # via BR2_GLOBAL_PATCH_DIR in the defconfig. No additional copy needed.
+
+    info "Board configuration applied!"
+}
+
+# Step 4: Configure Buildroot
+configure_buildroot() {
+    step "Configuring Buildroot..."
+
+    cd "${BUILDROOT_DIR}"
+
+    make vortex86_a9100_defconfig || {
+        error "Failed to configure Buildroot"
+        exit 1
+    }
+
+    info "Buildroot configured for Vortex86 A9100!"
+    cd "${SCRIPT_DIR}"
+}
+
+# Step 5: Build
+build_image() {
+    step "Building Vortex86 A9100 image..."
+    info "This will take a LONG time (30-120 minutes depending on system)."
+    info "Buildroot will cross-compile: toolchain, kernel, libraries, and all packages."
+
+    cd "${BUILDROOT_DIR}"
+
+    # Use all available CPU cores
+    export BR2_JLEVEL=$(nproc 2>/dev/null || echo 4)
+    info "Using ${BR2_JLEVEL} parallel jobs"
+
+    make 2>&1 | tee "${OUTPUT_DIR}/build.log" || {
+        error "Build failed! Check ${OUTPUT_DIR}/build.log for details."
+        error "Common issues:"
+        error "  - Missing dependencies (run ./build.sh again after installing them)"
+        error "  - Out of disk space (need at least 5GB free)"
+        error "  - Network issues (Buildroot downloads many source packages)"
+        cd "${SCRIPT_DIR}"
+        exit 1
+    }
+
+    cd "${SCRIPT_DIR}"
+    info "Build completed successfully!"
+}
+
+# Step 6: Create final disk image
+create_disk_image() {
+    step "Creating bootable disk image..."
+
+    cd "${BUILDROOT_DIR}"
+
+    # Run the post-image script
+    if [ -f "board/dmp/vortex86_a9100/post-image.sh" ]; then
+        bash "board/dmp/vortex86_a9100/post-image.sh" \
+            "${OUTPUT_DIR}/images" \
+            "${BUILDROOT_DIR}/staging" \
+            "${BUILDROOT_DIR}/target" \
+            "${BUILDROOT_DIR}/board/dmp/vortex86_a9100" || {
+            warn "Post-image script failed. Raw images are still available."
+        }
+    fi
+
+    cd "${SCRIPT_DIR}"
+}
+
+# Show results
+show_results() {
+    info "========================================"
+    info "Build Complete!"
+    info "========================================"
+    echo ""
+    info "Output files in ${OUTPUT_DIR}/images/:"
+    echo ""
+    echo "  vortex86_a9100.img  - Complete bootable disk image"
+    echo "  bzImage             - Linux kernel (if needed separately)"
+    echo "  rootfs.ext2         - Root filesystem image"
+    echo "  rootfs.tar          - Root filesystem tarball"
+    echo ""
+    echo "To write to SD card or USB:"
+    echo "  sudo dd if=${OUTPUT_DIR}/images/vortex86_a9100.img of=/dev/sdX bs=4M status=progress"
+    echo "  sync"
+    echo ""
+    echo "To test in QEMU:"
+    echo "  qemu-system-i386 -m 256 -hda ${OUTPUT_DIR}/images/vortex86_a9100.img"
+    echo ""
+    echo "To test in QEMU with serial console:"
+    echo "  qemu-system-i386 -m 256 -hda ${OUTPUT_DIR}/images/vortex86_a9100.img -serial stdio"
+    echo ""
+}
+
+# Clean
+do_clean() {
+    step "Cleaning build artifacts..."
+    if [ -d "${BUILDROOT_DIR}" ]; then
+        cd "${BUILDROOT_DIR}"
+        make clean 2>/dev/null || true
+        cd "${SCRIPT_DIR}"
+        warn "Source code is preserved. Run 'distclean' to remove everything."
+    fi
+    info "Clean complete!"
+}
+
+do_distclean() {
+    step "Performing full clean..."
+    if [ -d "${BUILDROOT_DIR}" ]; then
+        cd "${BUILDROOT_DIR}"
+        make distclean 2>/dev/null || true
+        cd "${SCRIPT_DIR}"
+    fi
+    rm -rf "${BUILDROOT_DIR}"
+    rm -rf "${OUTPUT_DIR}"
+    info "Distclean complete!"
+}
+
+# Menu config targets
+do_menuconfig() {
+    if [ ! -d "${BUILDROOT_DIR}" ]; then
+        download_buildroot
+        apply_board_config
+        configure_buildroot
+    fi
+    cd "${BUILDROOT_DIR}"
+    make menuconfig
+    make savedefconfig
+    cp "defconfig" "${SCRIPT_DIR}/configs/vortex86_a9100_defconfig"
+    info "Configuration saved to configs/vortex86_a9100_defconfig"
+    cd "${SCRIPT_DIR}"
+}
+
+do_linux_config() {
+    if [ ! -d "${BUILDROOT_DIR}" ]; then
+        error "Buildroot not set up. Run ./build.sh first."
+        exit 1
+    fi
+    cd "${BUILDROOT_DIR}"
+    make linux-menuconfig
+    cd "${SCRIPT_DIR}"
+}
+
+do_busybox_config() {
+    if [ ! -d "${BUILDROOT_DIR}" ]; then
+        error "Buildroot not set up. Run ./build.sh first."
+        exit 1
+    fi
+    cd "${BUILDROOT_DIR}"
+    make busybox-menuconfig
+    cd "${SCRIPT_DIR}"
+}
+
+# Main
+main() {
+    local cmd="${1:-build}"
+
+    mkdir -p "${OUTPUT_DIR}"
+
+    case "$cmd" in
+        build)
+            check_dependencies
+            download_buildroot
+            apply_board_config
+            configure_buildroot
+            build_image
+            create_disk_image
+            show_results
+            ;;
+        clean)
+            do_clean
+            ;;
+        distclean)
+            do_distclean
+            ;;
+        menuconfig)
+            do_menuconfig
+            ;;
+        linux-config)
+            do_linux_config
+            ;;
+        busybox-config)
+            do_busybox_config
+            ;;
+        help|--help|-h)
+            show_help
+            ;;
+        *)
+            error "Unknown command: ${cmd}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

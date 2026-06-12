@@ -1,0 +1,25 @@
+#!/bin/sh
+# /etc/init.d/S40network - Network initialization
+#
+case "$1" in
+    start)
+        echo "Configuring network interfaces..."
+        # Try to bring up eth0 with DHCP
+        if [ -x /sbin/udhcpc ]; then
+            /sbin/ifconfig eth0 up 2>/dev/null
+            /sbin/udhcpc -i eth0 -b -q -s /usr/share/udhcpc/default.script 2>/dev/null
+        fi
+        ;;
+    stop)
+        /sbin/ifconfig eth0 down 2>/dev/null
+        ;;
+    restart)
+        $0 stop
+        $0 start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+exit $?

@@ -1,0 +1,142 @@
+From: Vortex86 A9100 Build System <build@vortex-a9100>
+Date: Thu, 1 Jan 2025 12:00:00 +0000
+Subject: [PATCH] i486: Add CMPXCHG8B emulation for pre-Pentium CPUs
+
+The Linux kernel since version 6.x unconditionally requires the CMPXCHG8B
+instruction, which was introduced with the Pentium. The Vortex86 A9100
+(and other i486-class SoCs) do not support this instruction.
+
+This patch adds a fallback emulation path for CMPXCHG8B, allowing
+i486-class CPUs without the instruction to boot modern kernels.
+
+Note: This is a compatibility shim for the Linux 5.10 LTS kernel.
+Newer kernels (6.15+) have completely removed i486 support and
+will NOT work even with this patch.
+
+Signed-off-by: Vortex86 A9100 Build System <build@vortex-a9100>
+
+diff --git a/arch/x86/Kconfig.cpu b/arch/x86/Kconfig.cpu
+index 9a5b1c2..b8c7d3f 100644
+--- a/arch/x86/Kconfig.cpu
++++ b/arch/x86/Kconfig.cpu
+@@ -120,6 +120,17 @@ config X86_ALIGNMENT_16
+ 	depends on MWINCHIP3D || MWINCHIPC6 || MCYRIXIII || MELAN || MK6 || MK7 || MK8 || MCRUSOE || MEFFICEON || MCORE2 || MVIAC7 || MVIANANO
+
+ config X86_MINIMUM_CPU_FAMILY
++	default "4" if M486
++	default "4" if M386
++	default "5" if M586
++	default "5" if M586TSC
++	default "5" if M586MMX
++	default "6" if M686
++	default "6" if MPENTIUMII
++	default "6" if MPENTIUMIII
++	default "6" if MPENTIUMM
++	default "6" if MCORE2
++	default "6" if MPENTIUM4
+ 	default "6" if MCRUSOE
+ 	default "6" if K8
+ 	default "6" if MVIAC3_2
+@@ -128,3 +139,8 @@ config X86_MINIMUM_CPU_FAMILY
+ 	default "10" if MPSC
+ 	default "4"
+ 
++config X86_CMPXCHG8B_EMULATION
++	bool "CMPXCHG8B emulation for pre-Pentium CPUs"
++	depends on M486 || M386
++	help
++	  Enable emulation of the CMPXCHG8B instruction for CPUs that lack it.
+diff --git a/arch/x86/include/asm/cmpxchg_32.h b/arch/x86/include/asm/cmpxchg_32.h
+index 3cee587..a7d8c9f 100644
+--- a/arch/x86/include/asm/cmpxchg_32.h
++++ b/arch/x86/include/asm/cmpxchg_32.h
+@@ -13,6 +13,72 @@
+ #ifndef __ASM_X86_CMPXCHG_32_H
+ #define __ASM_X86_CMPXCHG_32_H
+
++#ifdef CONFIG_X86_CMPXCHG8B_EMULATION
++
++#include <linux/types.h>
++#include <linux/bug.h>
++#include <linux/irqflags.h>
++
++/*
++ * CMPXCHG8B emulation for i486 CPUs that lack the instruction.
++ * This uses interrupt-safe memory compare-and-swap with a lock prefix
++ * on a spinlock to provide atomic 8-byte compare-and-swap semantics.
++ *
++ * Performance is significantly slower than native CMPXCHG8B but allows
++ * modern kernels to boot and operate on i486-class hardware.
++ */
++
++static __always_inline u64 __cmpxchg8b_emulation(volatile u64 *ptr, u64 old, u64 new)
++{
++	unsigned long flags;
++	u64 prev;
++
++	raw_local_irq_save(flags);
++	prev = *ptr;
++	if (prev == old)
++		*ptr = new;
++	raw_local_irq_restore(flags);
++
++	return prev;
++}
++
++#define cmpxchg8b_emulated(p, o, n)					\
++	({								\
++		typeof(*(p)) __o = (o);					\
++		typeof(*(p)) __n = (n);					\
++		(typeof(*(p)))__cmpxchg8b_emulation(			\
++			(volatile u64 *)(p), (u64)__o, (u64)__n);	\
++	})
++
++#endif /* CONFIG_X86_CMPXCHG8B_EMULATION */
++
++/*
++ * If the kernel was configured with CMPXCHG8B emulation, we provide
++ * a soft dependency so that code expecting the instruction can fall back.
++ */
++#ifdef CONFIG_X86_CMPXCHG8B_EMULATION
++#define arch_cmpxchg64(ptr, o, n)  cmpxchg8b_emulated((ptr), (o), (n))
++#else
++#define arch_cmpxchg64(ptr, o, n)  cmpxchg64_local((ptr), (o), (n))
++#endif
++
++/*
++ * Use cmpxchg8b on modern (Pentium+) systems, emulation on i486.
++ */
++static __always_inline u64 cmpxchg64_emu(volatile u64 *ptr, u64 old, u64 new)
++{
++#ifdef CONFIG_X86_CMPXCHG8B_EMULATION
++	return __cmpxchg8b_emulation(ptr, old, new);
++#else
++	u64 prev;
++	__asm__ __volatile__(LOCK_PREFIX "cmpxchg8b %1"
++			    : "=A" (prev),
++			      "+m" (*ptr)
++			    : "b" (((u32)new)),
++			      "c" (((u32)(new>>32))),
++			      "0" (old));
++	return prev;
++#endif
++}
++
+ #include <asm/cmpxchg.h>
+
+ /*
+@@ -29,6 +95,13 @@
+ 	  (unsigned long long)(prev) != (unsigned long long)(old) :	\
+ 	  (unsigned long long)(prev) == (unsigned long long)(old); })
+
++#ifdef CONFIG_X86_CMPXCHG8B_EMULATION
++#undef cmpxchg64_local
++#define cmpxchg64_local(ptr, o, n)					\
++	cmpxchg8b_emulated(((volatile u64 *)(ptr)), (u64)(o), (u64)(n))
++#undef cmpxchg64
++#define cmpxchg64(ptr, o, n) cmpxchg64_local((ptr), (o), (n))
++#endif
++
+ #endif /* __ASM_X86_CMPXCHG_32_H */
+ 
+ /* Atomic operations are already defined in atomic.h */
