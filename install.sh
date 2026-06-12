@@ -24,6 +24,9 @@
 #   - Linux (native or WSL2)
 #   - root/sudo access
 #   - dd, lsblk, findmnt, fdisk
+# Optional:
+#   - pv (Pipe Viewer) — full progress bar with ETA, speed, and %
+#     Install: apt-get install pv (Debian/Ubuntu), pacman -S pv (Arch), dnf install pv (Fedora)
 #===========================================================
 
 set -euo pipefail
@@ -53,6 +56,93 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 header(){ echo -e "\n${BOLD}${BLUE}=== $* ===${NC}\n"; }
 step()  { echo -e "${CYAN}[STEP]${NC}  $*"; }
+
+# === Progress / Formatting Helpers ===
+
+# Format bytes to human-readable (e.g., 1073741824 -> "1.0 GiB")
+format_bytes() {
+    local bytes=$1
+    if [[ "$bytes" -lt 1024 ]]; then echo "${bytes}B"
+    elif [[ "$bytes" -lt 1048576 ]]; then echo "$((bytes / 1024))KB"
+    elif [[ "$bytes" -lt 1073741824 ]]; then echo "$((bytes / 1048576))MB"
+    else
+        local mb=$((bytes / 1048576))
+        local gb=$((mb / 1024))
+        local frac=$(( (mb % 1024) * 10 / 1024 ))
+        echo "${gb}.${frac}GB"
+    fi
+}
+
+# Format duration in seconds to mm:ss or h:mm:ss
+format_duration() {
+    local total_seconds=$1
+    local hours=$((total_seconds / 3600))
+    local minutes=$(( (total_seconds % 3600) / 60 ))
+    local secs=$((total_seconds % 60))
+    if [[ "$hours" -gt 0 ]]; then
+        printf "%d:%02d:%02d" "$hours" "$minutes" "$secs"
+    else
+        printf "%d:%02d" "$minutes" "$secs"
+    fi
+}
+
+# Draw a simple progress bar: [========>---------] 67%
+# $1 = current, $2 = total, $3 = bar width (default 20)
+draw_progress_bar() {
+    local current=$1
+    local total=$2
+    local width=${3:-20}
+    local pct=0
+    if [[ "$total" -gt 0 ]]; then
+        pct=$(( current * 100 / total ))
+    fi
+    local filled=$(( current * width / (total > 0 ? total : 1) ))
+    local empty=$(( width - filled ))
+    if [[ "$filled" -gt "$width" ]]; then filled=$width; empty=0; fi
+    printf "["
+    for ((i=0; i<filled; i++)); do printf "="; done
+    if [[ "$filled" -lt "$width" ]]; then printf ">"; ((empty--)); fi
+    for ((i=0; i<empty; i++)); do printf "-"; done
+    printf "] %d%%" "$pct"
+}
+
+# Spinner characters
+SPINNER_CHARS=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+
+# Show progress line with spinner, ETA, speed, and progress bar.
+# Uses \r to overwrite the same line.
+# $1 = spinner index, $2 = bytes copied, $3 = total bytes, $4 = speed (bytes/s), $5 = ETA seconds
+show_progress_line() {
+    local idx=$1
+    local copied=$2
+    local total=$3
+    local speed=$4
+    local eta=$5
+
+    local spinner="${SPINNER_CHARS[$((idx % ${#SPINNER_CHARS[@]}))]}"
+    local copied_str=$(format_bytes "$copied")
+    local total_str=$(format_bytes "$total")
+    local speed_str=$(format_bytes "$speed")
+    local eta_str
+    if [[ "$eta" -gt 0 ]]; then
+        eta_str="ETA $(format_duration "$eta")"
+    else
+        eta_str="ETA --:--"
+    fi
+
+    # Build progress bar
+    local bar
+    bar=$(draw_progress_bar "$copied" "$total" 20)
+
+    # Single-line progress display
+    printf "\r  %s  %s/s  %s  %s  %s/%s  " \
+        "$spinner" "${speed_str}/s" "$eta_str" "$bar" "$copied_str" "$total_str"
+}
+
+# Clear the progress line (write spaces over it)
+clear_progress_line() {
+    printf "\r%$(tput cols 2>/dev/null || echo 80)s\r"
+}
 
 # System disk blacklist - NEVER allow writing to these
 SYSTEM_DISKS_BLACKLIST=(
@@ -203,16 +293,20 @@ is_system_disk() {
 # === Check if device is mounted ===
 is_mounted() {
     local dev="$1"
+    # Check if the base device itself is mounted
     if findmnt --source "$dev" &>/dev/null; then
         return 0
     fi
-    # Also check if any partition of this device is mounted
-    if lsblk -n -o NAME "$dev" 2>/dev/null | tail -n +2 | while read -r part; do
-        if findmnt --source "/dev/$part" &>/dev/null; then
-            return 0
-        fi
-    done 2>/dev/null; then
-        :
+    # Get all partitions and check each one (no pipe to avoid subshell bug)
+    local partitions
+    partitions=$(lsblk -n -o NAME "$dev" 2>/dev/null | tail -n +2 || true)
+    if [[ -n "$partitions" ]]; then
+        local part
+        while IFS= read -r part; do
+            if [[ -n "$part" ]] && findmnt --source "/dev/$part" &>/dev/null; then
+                return 0
+            fi
+        done <<< "$partitions"
     fi
     return 1
 }
@@ -315,23 +409,15 @@ select_device_interactive() {
         rm=$(lsblk -d -n -o RM "/dev/$name" 2>/dev/null || echo "0")
 
         local flag=""
-        local color="${NC}"
         if [[ "$rm" == "1" ]]; then
-            flag="⚡ REMOVABLE"
-            color="${GREEN}"
             flag="${GREEN}⚡ REMOVABLE${NC}"
-        fi
-        if is_system_disk "$name"; then
+        elif is_system_disk "$name"; then
             flag="${RED}⛔ SYSTEM DISK${NC}"
-            color="${RED}"
-        fi
-        if is_mounted "/dev/$name"; then
-            flag="${YELLOW}🔗 MOUNTED${NC}"
-            color="${YELLOW}"
+        elif is_mounted "/dev/$name"; then
             flag="${YELLOW}🔗 MOUNTED${NC}"
         fi
 
-        printf "  %2d)  ${color}/dev/%-8s${NC} %-6s  %-30s  %b\n" \
+        printf "  %2d)  /dev/%-8s  %-6s  %-30s  %b\n" \
             $((i+1)) "$name" "$size" "${model:0:30}" "$flag"
     done
 
@@ -590,64 +676,199 @@ confirm_write() {
     info "Confirmation accepted. Proceeding..."
 }
 
-# === Write the image ===
+# === Write the image (with progress bar, ETA, and spinner) ===
+# $1 = device, $2 = image path, $3 = image size in bytes
 write_image() {
     local dev="$1"
     local image="$2"
-    local do_verify="${3:-false}"
+    local image_size="${3:-0}"
 
     header "Writing Image to ${dev}"
+    info "Image size: $(format_bytes "$image_size")"
+    info "Target:     ${dev}"
+    echo ""
 
     # Flush any cached writes to the device
     blockdev --flushbufs "$dev" 2>/dev/null || true
 
-    # Determine dd options
-    local dd_opts=(
-        "if=$image"
-        "of=$dev"
-        "bs=4M"
-        "status=progress"
-        "conv=fsync"
-    )
-
-    # Add O_DIRECT for better performance (if supported)
-    if blockdev --getopt "$dev" 2>/dev/null | grep -q "RO"; then
-        :
-    else
-        dd_opts+=("oflag=direct")
+    # Determine O_DIRECT support (used by both pv and non-pv paths)
+    local use_oflag=""
+    local is_ro
+    is_ro=$(blockdev --getro "$dev" 2>/dev/null || echo 0)
+    if [[ "$is_ro" != "1" ]]; then
+        use_oflag="oflag=direct"
     fi
-
-    step "Writing ${image} to ${dev}..."
-    echo ""
 
     local start_time=$SECONDS
-
-    if [[ "$image" == *.gz ]]; then
-        # Compressed image - pipe through gunzip
-        info "Decompressing and writing in one pass..."
-        sudo bash -c "zcat '$image' | dd of='$dev' bs=4M status=progress conv=fsync oflag=direct" || {
-            error "Write failed!"
-            exit 1
-        }
-    else
-        # Direct write
-        sudo dd "${dd_opts[@]}" || {
-            # Retry without O_DIRECT if it failed
-            warn "Direct write failed, retrying without O_DIRECT..."
-            sudo dd if="$image" of="$dev" bs=4M status=progress conv=fsync || {
-                error "Write failed!"
-                exit 1
-            }
-        }
+    local use_pv=false
+    if command -v pv &>/dev/null; then
+        use_pv=true
+        info "Using pv for progress display (install pv for this feature)"
     fi
 
+    if $use_pv && [[ "$image_size" -gt 0 ]]; then
+        # === METHOD 1: pv-based progress (full progress bar, ETA, speed, %) ===
+        step "Writing with pv progress bar..."
+        echo ""
+
+        if [[ "$image" == *.gz ]]; then
+            # Compressed: decompress on-the-fly with pv
+            # pv shows progress based on the compressed file size
+            sudo bash -c "pv -s '$image_size' '$image' | zcat | dd of='$dev' bs=4M conv=fsync $use_oflag 2>/dev/null" || {
+                warn "Direct I/O failed, retrying without O_DIRECT..."
+                sudo bash -c "pv -s '$image_size' '$image' | zcat | dd of='$dev' bs=4M conv=fsync 2>/dev/null" || {
+                    error "Write failed!"
+                    exit 1
+                }
+            }
+        else
+            # Regular image: pipe through pv
+            sudo bash -c "pv -s '$image_size' '$image' | dd of='$dev' bs=4M conv=fsync $use_oflag 2>/dev/null" || {
+                warn "Direct I/O failed, retrying without O_DIRECT..."
+                sudo bash -c "pv -s '$image_size' '$image' | dd of='$dev' bs=4M conv=fsync 2>/dev/null" || {
+                    error "Write failed!"
+                    exit 1
+                }
+            }
+        fi
+    else
+        # === METHOD 2: dd with manual ETA + spinner (no pv) ===
+        local progress_file
+        progress_file=$(mktemp /tmp/vortex-dd-progress.XXXXXX)
+        local dd_pid=0
+
+        step "Writing (ETA + spinner mode)..."
+        echo ""
+
+        # Start dd in background, capturing stderr
+        if [[ "$image" == *.gz ]]; then
+            sudo bash -c "zcat '$image' | dd of='$dev' bs=4M conv=fsync $use_oflag 2>&1" > "$progress_file" 2>&1 &
+            dd_pid=$!
+        else
+            sudo dd if="$image" of="$dev" bs=4M conv=fsync $use_oflag 2>"$progress_file" &
+            dd_pid=$!
+        fi
+
+        # Monitor loop: parse dd progress, update spinner + ETA every second
+        local spinner_idx=0
+        local prev_bytes=0
+        local stall_count=0
+        while kill -0 $dd_pid 2>/dev/null; do
+            # Send SIGUSR1 to dd to force a progress line on stderr
+            kill -USR1 $dd_pid 2>/dev/null || true
+
+            # Read the LAST line from progress file that contains "bytes" and "copied"
+            # Use LC_ALL=C to ensure consistent number format regardless of locale
+            local progress_line
+            progress_line=$(grep "bytes.*copied" "$progress_file" 2>/dev/null | LC_ALL=C tail -1)
+
+            local bytes_copied=0
+            local elapsed_sec=0
+            local speed_bps=0
+
+            if [[ -n "$progress_line" ]]; then
+                # Parse dd progress line with C locale to avoid decimal separator issues
+                # Format: "6325862400 bytes (6.3 GB, 5.9 GiB) copied, 42.528 s, 149 MB/s"
+                local bytes_part secs_part speed_part
+                bytes_part=$(echo "$progress_line" | LC_ALL=C awk '{print $1}')
+                secs_part=$(echo "$progress_line" | LC_ALL=C awk '{print $(NF-2)}' | tr -d ',')
+                speed_part=$(echo "$progress_line" | LC_ALL=C awk '{print $(NF-1)}')
+
+                if [[ "$bytes_part" =~ ^[0-9]+$ ]]; then
+                    bytes_copied=$bytes_part
+                fi
+                # Parse seconds (always use dot as decimal separator with LC_ALL=C)
+                if [[ -n "$secs_part" ]]; then
+                    elapsed_sec=$(echo "$secs_part" | cut -d. -f1)
+                    elapsed_sec=${elapsed_sec:-0}
+                fi
+                # Parse speed (e.g., "149" or "149MB/s" or "42.5MB/s")
+                if [[ -n "$speed_part" ]]; then
+                    local speed_num
+                    speed_num=$(echo "$speed_part" | sed 's/[^0-9.]//g' | cut -d. -f1)
+                    speed_num=${speed_num:-0}
+                    local speed_unit
+                    speed_unit=$(echo "$speed_part" | grep -o '[KMGT]B' 2>/dev/null || echo "B")
+                    case "$speed_unit" in
+                        "GB") speed_bps=$((speed_num * 1073741824)) ;;
+                        "MB") speed_bps=$((speed_num * 1048576)) ;;
+                        "KB") speed_bps=$((speed_num * 1024)) ;;
+                        *)    speed_bps=$speed_num ;;
+                    esac
+                fi
+            fi
+
+            # Calculate ETA
+            local eta=0
+            if [[ "$bytes_copied" -gt 0 && "$elapsed_sec" -gt 0 && "$image_size" -gt 0 ]]; then
+                local remaining=$((image_size - bytes_copied))
+                local instant_speed=$((bytes_copied / elapsed_sec))
+                if [[ "$instant_speed" -gt 0 ]]; then
+                    eta=$((remaining / instant_speed))
+                fi
+
+                # Detect stall: if bytes haven't changed this second
+                if [[ "$bytes_copied" -eq "$prev_bytes" ]]; then
+                    ((stall_count++))
+                else
+                    stall_count=0
+                fi
+                prev_bytes=$bytes_copied
+            fi
+
+            # If the device is slow to respond, show a waiting message
+            if [[ "$stall_count" -ge 5 ]]; then
+                printf "\r  ⏳ Waiting for device... (%ds stalled)" "$stall_count"
+            elif [[ "$bytes_copied" -gt 0 ]]; then
+                show_progress_line "$spinner_idx" "$bytes_copied" "$image_size" "$speed_bps" "$eta"
+            else
+                printf "\r  %s  Initializing write..." "${SPINNER_CHARS[$((spinner_idx % ${#SPINNER_CHARS[@]}))]}"
+            fi
+
+            ((spinner_idx++))
+            sleep 1
+        done
+
+        # Wait for dd to finish and check its exit code
+        local dd_exit=0
+        wait $dd_pid 2>/dev/null || dd_exit=$?
+
+        clear_progress_line
+
+        # Clean up progress file
+        rm -f "$progress_file"
+
+        # If dd failed, retry without O_DIRECT
+        if [[ "$dd_exit" -ne 0 && -n "$use_oflag" ]]; then
+            warn "O_DIRECT write failed (exit code $dd_exit), retrying without O_DIRECT..."
+            step "Retrying (simpler I/O mode)..."
+
+            if [[ "$image" == *.gz ]]; then
+                sudo bash -c "zcat '$image' | dd of='$dev' bs=4M conv=fsync" || {
+                    error "Write failed on retry!"
+                    exit 1
+                }
+            else
+                sudo dd if="$image" of="$dev" bs=4M conv=fsync || {
+                    error "Write failed on retry!"
+                    exit 1
+                }
+            fi
+        elif [[ "$dd_exit" -ne 0 ]]; then
+            error "Write failed (exit code $dd_exit) and O_DIRECT was not enabled!"
+            exit 1
+        fi
+    fi
+
+    # Final sync to ensure all data is flushed
+    step "Flushing buffers..."
+    sync
+
     local elapsed=$((SECONDS - start_time))
-    local dev_size=$(get_device_size "$dev")
-    local dev_size_mb=$((dev_size / 1024 / 1024))
-    local speed=$((dev_size_mb / (elapsed > 0 ? elapsed : 1)))
+    local speed=$((image_size / (elapsed > 0 ? elapsed : 1)))
 
     echo ""
-    info "Write complete in ${elapsed}s (${speed}MB/s)"
+    info "${GREEN}Write complete!${NC}  Duration: $(format_duration $elapsed)  Avg speed: $(format_bytes $speed)/s"
 }
 
 # === Verify the write ===
@@ -822,12 +1043,15 @@ main() {
     info "Using image: ${BOLD}$image${NC}"
 
     # Validate image
-    local image_info
-    image_info=$(validate_image "$image")
+    # Validate image - uses a temp file for robust value passing
+    local image_info_file
+    image_info_file=$(mktemp /tmp/vortex-image-info.XXXXXX)
+    validate_image "$image" > "$image_info_file"
     local actual_image
     local image_size
-    actual_image=$(echo "$image_info" | head -1)
-    image_size=$(echo "$image_info" | tail -1)
+    actual_image=$(head -1 "$image_info_file")
+    image_size=$(tail -1 "$image_info_file")
+    rm -f "$image_info_file"
 
     # Select or validate target device
     if [[ -z "$target_dev" ]]; then
@@ -854,8 +1078,8 @@ main() {
     # Confirm
     confirm_write "$target_dev" "$actual_image" "$image_size"
 
-    # Write
-    write_image "$target_dev" "$actual_image" "$do_verify"
+    # Write (pass image_size to avoid recalculating)
+    write_image "$target_dev" "$actual_image" "$image_size"
 
     # Verify
     if $do_verify; then

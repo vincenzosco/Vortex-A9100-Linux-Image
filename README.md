@@ -3,16 +3,34 @@
 > **Build a complete, bootable Linux distribution for the DM&P Vortex86 A9100**
 > (i486-compatible SoC, 300MHz, FPU-less, embedded x86)
 
+[![GitHub](https://img.shields.io/badge/GitHub-Vortex--A9100--Linux--Image-blue?style=flat&logo=github)](https://github.com/vincenzosco/Vortex-A9100-Linux-Image)
+
+**Repository:** [https://github.com/vincenzosco/Vortex-A9100-Linux-Image](https://github.com/vincenzosco/Vortex-A9100-Linux-Image)
+
 ## Features
 
-- **Kernel:** Linux 5.10 LTS (last kernel with proper i486 support)
+- **Kernel:** Linux 5.10 LTS (last kernel with proper i486 support) with custom CMPXCHG8B emulation patch
 - **C Library:** musl (lightweight, optimized for embedded systems)
 - **Init System:** BusyBox init (fast, minimal, no systemd overhead)
 - **Package Manager:** opkg (with local repository support)
-- **GUI:** X.Org + Openbox — lightweight, usable desktop
-- **Bootloader:** GRUB (supports booting from CF cards, IDE SSDs, USB)
-- **Network:** DHCP client, SSH server, basic networking tools
-- **Disk Image:** Pre-partitioned with GRUB, bootable on real hardware
+- **GUI:** X.Org + Openbox — lightweight, fast desktop environment
+- **Bootloader:** GRUB (supports booting from CF cards, IDE SSDs, USB, hard drives)
+- **Network:** DHCP client, SSH server, basic networking tools (RDC R6040 + Realtek 8139)
+- **Installer:** Interactive `install.sh` with device detection, safety checks, ETA progress bar
+
+## Quick Start
+
+```bash
+# Clone
+git clone https://github.com/vincenzosco/Vortex-A9100-Linux-Image.git
+cd Vortex-A9100-Linux-Image
+
+# Build the image (30-120 min first time)
+./build.sh
+
+# Write to your CF card / USB drive / hard drive
+sudo ./install.sh
+```
 
 ## System Requirements
 
@@ -38,68 +56,93 @@ sudo dnf install -y @development-tools bison flex bc wget tar gzip \
 ```
 
 ### Target Hardware (Vortex86 A9100)
-- **CPU:** i486-compatible (FPU emulated)
-- **RAM:** 64MB minimum (128MB+ recommended for GUI)
-- **Storage:** 512MB+ (CF card, IDE SSD, or USB)
-- **Display:** VGA-compatible (VESA framebuffer)
-- **Network:** RDC R6040 or Realtek 8139 Ethernet (drivers included)
+| Component | Requirement |
+|-----------|-------------|
+| **CPU** | i486-compatible (FPU emulated in software) |
+| **RAM** | 64MB minimum, 128MB+ recommended for GUI |
+| **Storage** | 512MB+ (CF card, IDE SSD, USB drive, or hard disk) |
+| **Display** | VGA-compatible (VESA framebuffer) |
+| **Network** | RDC R6040 or Realtek 8139 Ethernet (drivers included) |
+| **Serial** | ttyS0 at 115200 baud (for debugging) |
 
-## Quick Start
+## Building the Image
 
-### Clone and Build
 ```bash
-# Clone the build system
-git clone <your-repo-url> vortex-a9100-build
-cd vortex-a9100-build
+cd Vortex-A9100-Linux-Image
 
-# Start the build
+# Full build (downloads Buildroot + sources, cross-compiles everything)
 ./build.sh
+
+# If you need to customize packages first
+./build.sh menuconfig
+./build.sh
+
+# Clean rebuild
+./build.sh distclean && ./build.sh
 ```
 
-### Build Duration
-- **First build:** 30–120 minutes (downloads and compiles everything)
-- **Subsequent builds:** 5–20 minutes (only changed packages)
+### Build Process
+
+The build system:
+1. Downloads Buildroot 2023.02.14 (last version with reliable i486 support)
+2. Applies the custom Vortex86 A9100 board configuration
+3. Downloads and patches Linux 5.10 LTS kernel (with CMPXCHG8B emulation for i486)
+4. Cross-compiles the toolchain (musl libc, GCC)
+5. Builds all packages (BusyBox, X.Org, Openbox, OpenSSH, opkg, etc.)
+6. Creates a bootable disk image with GRUB
 
 ### Output Files
+
 After the build completes, files are in `output/images/`:
 
-| File | Description |
-|------|-------------|
-| `vortex86_a9100.img` | **Complete bootable disk image** (512MB) |
-| `bzImage` | Linux kernel (standalone) |
-| `rootfs.ext2` | Root filesystem image |
-| `rootfs.tar` | Root filesystem tarball |
+| File | Description | Use |
+|------|-------------|-----|
+| `vortex86_a9100.img` | **Complete bootable disk image** (512MB) | Write directly to storage media |
+| `bzImage` | Linux kernel | For partition-based install |
+| `rootfs.ext2` | Root filesystem image | For partition-based install |
+| `rootfs.tar` | Root filesystem tarball | For partition-based install |
 
-## Installation
+## Installation to Real Hardware
 
-### Automated Installer (Recommended)
+### :zap: Automated Installer (Recommended)
 
-The project includes an interactive installer script with built-in safety checks:
+The project includes a production-grade interactive installer with safety checks:
 
 ```bash
 # Interactive mode - lists all devices, guides you through
 sudo ./install.sh
 
-# Direct to a specific device (with safety checks)
+# Direct to a specific device (CF card, USB drive, hard disk)
 sudo ./install.sh /dev/sdc
 
 # List available devices without installing
 ./install.sh --list
 
-# Full help
-./install.sh --help
+# Write and verify (read-back checksum)
+sudo ./install.sh /dev/sdc --verify
 ```
 
-The installer provides:
-- **Interactive device selection** — shows all disks with size, model, and safety warnings
-- **System disk blacklist** — refuses to write to your boot/root drive
-- **Mount detection** — warns if the target is mounted and auto-unmounts it
-- **Size validation** — checks the target is large enough for the image
-- **MBR signature check** — verifies the image is actually bootable
-- **Triple confirmation** — requires typing the device name AND "YES"
-- **Progress display** — shows write speed and estimated time
-- **Optional verification** — reads back and checksums the written data
-- **Post-install guidance** — next steps and QEMU test command
+#### Installer Features
+
+| Feature | Details |
+|---------|---------|
+| **Interactive device picker** | Shows all block devices with model, size, and safety warnings |
+| **System disk blacklist** | Refuses to write to `sda`, `sdb`, `nvme0`, etc. (can override with `--force`) |
+| **Mount detection** | Detects mounted partitions, auto-unmounts them |
+| **Size validation** | Checks target is large enough for the image |
+| **MBR boot signature check** | Verifies the image is bootable before writing |
+| **Triple confirmation** | Requires typing the device name AND "YES" |
+| **Progress display** | Live spinner, progress bar `[====>-----] 67%`, ETA, speed |
+| **Stall detection** | Warns if device stops responding during write |
+| **Post-write verification** | Optional SHA256 checksum comparison |
+| **pv support** | Full progress bar if `pv` is installed (`sudo apt-get install pv`) |
+
+#### Installer Progress Display
+
+When writing, you'll see a live-updating single line:
+```
+  ⠋  45.2MB/s  ETA 0:12  [========>---------]  67%  128MB/512MB
+```
 
 ### Manual Write (Advanced)
 
@@ -107,42 +150,30 @@ If you prefer to use `dd` directly:
 
 ```bash
 # Write disk image to SD card / CF card / USB drive
-# WARNING: Make sure /dev/sdX is your target device!
 sudo dd if=output/images/vortex86_a9100.img of=/dev/sdX bs=4M status=progress conv=fsync
 sync
 ```
 
 ### Partition-Based Install (Alternative)
 
-If you have an existing partition layout and only want to replace the rootfs:
+For existing partition layouts:
 
 ```bash
-# Mount your target root partition (e.g., /dev/sdb2)
+# Mount root partition
 sudo mount /dev/sdb2 /mnt
 
-# Extract the rootfs tarball
+# Extract rootfs
 sudo tar xf output/images/rootfs.tar -C /mnt
 
-# Copy the kernel to your boot partition
+# Copy kernel to boot partition
 sudo mount /dev/sdb1 /mnt/boot
 sudo cp output/images/bzImage /mnt/boot/
-
-# Clean up
-sudo umount /mnt/boot /mnt
 ```
 
-### Burn to CF Card (adapter via USB)
-```bash
-sudo ./install.sh /dev/sdb          # Using the installer (safer)
-# or
-sudo dd if=output/images/vortex86_a9100.img of=/dev/sdb bs=4M status=progress
-```
+## Testing in QEMU (Before Deploying to Hardware)
 
-## Testing
-
-### Test in QEMU (No Hardware Required)
 ```bash
-# Basic test
+# Basic test (no hardware required)
 qemu-system-i386 -m 256 -hda output/images/vortex86_a9100.img
 
 # With serial console (for debugging)
@@ -152,34 +183,46 @@ qemu-system-i386 -m 256 -hda output/images/vortex86_a9100.img -serial stdio
 qemu-system-i386 -m 256 -hda output/images/vortex86_a9100.img -vga std
 ```
 
-## Usage Guide
+## First Boot on Real Hardware
 
-### First Boot
-1. Connect VGA display and PS/2 keyboard
-2. Optionally connect serial console (ttyS0, 115200 baud)
-3. Power on the Vortex86 A9100 board
-4. GRUB boot menu appears (5 second timeout)
-5. System boots to login prompt
+1. **Prepare your storage media:**
+   - CF card via USB adapter, IDE SSD, or USB drive
+   - Run: `sudo ./install.sh` and select your device
 
-### Login
-- **User:** `root`
-- **Password:** (empty — press Enter)
-- **Serial login:** ttyS0 at 115200 baud
-- **VGA login:** Press Enter on tty1
+2. **Connect to the Vortex86 A9100 board:**
+   - VGA display + PS/2 keyboard (for GUI)
+   - Serial console (ttyS0, 115200 baud, no parity, 8 data bits, 1 stop bit)
 
-### Start the GUI
+3. **Power on the board**
+
+4. **GRUB boot menu appears** (5 second timeout):
+   - Select "Vortex86 A9100 Linux" (default)
+   - "Verbose" mode for debugging
+   - "Single User" for maintenance
+
+5. **Login:**
+   - User: `root`
+   - Password: (empty — press Enter)
+   - Serial: ttyS0 at 115200 baud
+   - VGA: Press Enter on tty1
+
+## Using the System
+
+### Launch the GUI
+
 ```bash
-# At the command prompt, type:
+# At the command prompt:
 startx
 ```
 
 This launches:
 - X.Org server (VESA framebuffer driver)
 - Openbox window manager with dark theme
-- Taskbar at bottom with clock
 - Right-click desktop for application menu
+- Terminal, clock, system monitor available
 
 ### Package Manager (opkg)
+
 ```bash
 # Update package lists
 opkg update
@@ -195,31 +238,30 @@ opkg list-installed
 
 # List available packages
 opkg list
-
-# Upgrade all packages
-opkg upgrade
 ```
 
-> **Note:** You must set up your own opkg repository for binary packages.
-> See `/etc/opkg.conf` for configuration. Alternatively, rebuild the image
-> with `./build.sh menuconfig` to add packages permanently.
+> **Note:** For binary package support, set up your own opkg repository.
+> See `/etc/opkg.conf` for configuration. To add packages permanently,
+> rebuild with: `./build.sh menuconfig` → enable packages → rebuild.
 
 ### Network Configuration
-```bash
-# DHCP (default - auto-starts)
-# No configuration needed — eth0 gets IP via DHCP
 
-# Static IP (edit /etc/network/interfaces)
+```bash
+# DHCP (default - auto-starts on boot)
+# No configuration needed
+
+# Static IP
 ifconfig eth0 192.168.1.100 netmask 255.255.255.0 up
 route add default gw 192.168.1.1
 
-# Check network status
+# Check status
 ifconfig
 route -n
 ping 8.8.8.8
 ```
 
 ### SSH Access
+
 ```bash
 # SSH server starts automatically on boot
 # Connect from another machine:
@@ -227,8 +269,9 @@ ssh root@<vortex-ip-address>
 ```
 
 ### Common Commands
+
 ```bash
-# System info
+# System information
 htop                    # Process monitor
 free -m                 # Memory usage
 df -h                   # Disk usage
@@ -238,80 +281,83 @@ dmesg                   # Kernel log
 
 # Files and editing
 nano <file>             # Text editor
-mc                      # File manager (if installed)
 ls -la                  # List files
 
 # Serial console (if connected)
-cu -l /dev/ttyS0 -s 115200
+screen /dev/ttyUSB0 115200
+```
+
+## Architecture
+
+### Boot Process
+
+1. BIOS loads GRUB from MBR
+2. GRUB loads Linux kernel (`/boot/bzImage`)
+3. Kernel boots with: `console=ttyS0,115200n8 console=tty0 root=/dev/sda1`
+4. BusyBox init runs `/etc/init.d/rcS`
+5. Network, SSH, and X11 services start
+6. Login prompt on serial console and VGA
+
+### Partition Layout (512MB disk)
+
+| Partition | Size | Type | Mount | Label |
+|-----------|------|------|-------|-------|
+| p1 | 50MB | ext2 | `/boot` | `vortex-boot` |
+| p2 | ~462MB | ext4 | `/` | `vortex-root` |
+
+### Software Stack
+
+```
+┌──────────────────────────────────────────────┐
+│  Openbox Window Manager (GUI)                │
+├──────────────────────────────────────────────┤
+│  X.Org Server (VESA / fbdev drivers)         │
+├──────────────────────────────────────────────┤
+│  opkg (Package Manager)  │  SSH  │  Network  │
+├──────────────────────────────────────────────┤
+│  BusyBox (init, shell, coreutils, udhcpc)    │
+├──────────────────────────────────────────────┤
+│  musl libc (lightweight C library)           │
+├──────────────────────────────────────────────┤
+│  Linux 5.10 LTS + CMPXCHG8B emulation patch  │
+├──────────────────────────────────────────────┤
+│  GRUB Bootloader (i386-pc)                   │
+└──────────────────────────────────────────────┘
 ```
 
 ## Customization
 
 ### Add/Remove Packages
+
 ```bash
-# Open Buildroot menuconfig
 ./build.sh menuconfig
 
 # Navigate to: Target Packages > ...
 # Enable/disable packages as needed
 # Save and exit
-# Rebuild: ./build.sh clean && ./build.sh
+# Rebuild
+./build.sh
 ```
 
-### Change Kernel Configuration
+### Kernel Configuration
+
 ```bash
-# Open Linux kernel menuconfig
 ./build.sh linux-config
 
 # Modify kernel options
 # Save and exit
-# Rebuild: ./build.sh
+# Rebuild
+./build.sh
 ```
 
-### Enable X11 Auto-Start
+### Enable GUI Auto-Start on Boot
+
+Edit `board/dmp/vortex86_a9100/overlay/etc/init.d/S60xorg`:
 ```bash
-# Edit the overlay file before building:
-# board/dmp/vortex86_a9100/overlay/etc/init.d/S60xorg
-
 # Change:
-#   AUTOSTART="no"
+AUTOSTART="no"
 # To:
-#   AUTOSTART="yes"
-```
-
-## Architecture Details
-
-### Boot Process
-1. BIOS loads GRUB from MBR
-2. GRUB loads Linux kernel (`/boot/bzImage`)
-3. Kernel boots with: `console=ttyS0,115200n8 console=tty0 root=/dev/sda1`
-4. BusyBox init runs `/etc/init.d/rcS`
-5. System services start: networking, SSH, optionally X11
-6. Login prompt on serial console and VGA
-
-### Partition Layout (512MB disk)
-| Partition | Size | Type | Mount | Label |
-|-----------|------|------|-------|-------|
-| p1 (boot) | 50MB | ext2 | `/boot` | `vortex-boot` |
-| p2 (root) | ~462MB | ext4 | `/` | `vortex-root` |
-
-### Software Stack
-```
-┌──────────────────────────────────────────────┐
-│  Openbox Window Manager (GUI)                    │
-├──────────────────────────────────────────────┤
-│  X.Org Server (VESA/fbdev drivers)           │
-├──────────────────────────────────────────────┤
-│  opkg (Package Manager) / SSH / Networking    │
-├──────────────────────────────────────────────┤
-│  BusyBox (init, shell, coreutils, udhcpc)     │
-├──────────────────────────────────────────────┤
-│  musl libc (lightweight C library)           │
-├──────────────────────────────────────────────┤
-│  Linux 5.10 LTS (patched for i486/CMPXCHG8B) │
-├──────────────────────────────────────────────┤
-│  GRUB Bootloader (i386-pc)                   │
-└──────────────────────────────────────────────┘
+AUTOSTART="yes"
 ```
 
 ## Troubleshooting
@@ -320,30 +366,78 @@ cu -l /dev/ttyS0 -s 115200
 - Check `output/build.log` for error details
 - Ensure all dependencies are installed
 - Try: `./build.sh distclean && ./build.sh`
+- Common: missing network access (Buildroot downloads many packages)
 
-### Kernel Panic / Boot Failure
-- Check serial console output
-- Try booting from GRUB "Verbose" mode
-- Common issues: wrong root partition, missing driver
+### Kernel Panic / Boot Failure on Real Hardware
+- Connect serial console (ttyS0, 115200) to see kernel messages
+- Select "Verbose" mode in GRUB
+- Common issues: wrong root partition, missing storage driver
+- Try booting from GRUB with: `linux /boot/bzImage root=/dev/hda1`
 
 ### GUI Won't Start
-- The Vortex86 A9100 uses VESA framebuffer
-- Try: `Xorg -configure` to generate an xorg.conf
+- The Vortex86 A9100 uses VESA framebuffer — most VGA chips work
+- Try: `Xorg -configure` to generate a custom xorg.conf
 - Check: `dmesg | grep -i vesa`
-- Try the fbdev driver instead: edit `/etc/X11/xorg.conf`
+- Try fbdev driver: edit `/etc/X11/xorg.conf`, change `Driver "vesa"` to `Driver "fbdev"`
 
 ### No Network
 - Check: `dmesg | grep eth`
 - Check: `ifconfig eth0`
-- The RDC R6040 driver is included; if your board uses a different NIC,
-  you'll need to enable it via `./build.sh linux-config`
+- The RDC R6040 and Realtek 8139 drivers are included
+- For other NICs, enable them via `./build.sh linux-config`
+
+### Installer Won't Detect Device
+- Check: `lsblk -d` — does your device appear?
+- For CF card readers: try a different USB port or adapter
+- Some USB-to-CF adapters present as `/dev/sdX`
+
+## Project Structure
+
+```
+Vortex-A9100-Linux-Image/
+├── build.sh                          # Main build orchestrator
+├── install.sh                        # Interactive image installer
+├── README.md                         # This file
+├── configs/
+│   └── vortex86_a9100_defconfig      # Buildroot target configuration
+├── board/
+│   └── dmp/
+│       └── vortex86_a9100/
+│           ├── linux.config          # Kernel configuration overlay
+│           ├── busybox.config        # BusyBox configuration overlay
+│           ├── grub.cfg              # GRUB boot menu configuration
+│           ├── openbox-config        # Openbox window manager config
+│           ├── post-build.sh         # Post-build filesystem setup
+│           ├── post-image.sh         # Bootable disk image creation
+│           ├── patches/
+│           │   └── linux/
+│           │       └── 0001-i486-cmpxchg8b-emulation.patch
+│           └── overlay/
+│               ├── etc/
+│               │   ├── inittab       # BusyBox init configuration
+│               │   ├── profile       # Shell profile
+│               │   ├── hostname
+│               │   ├── opkg.conf     # Package manager settings
+│               │   ├── X11/xorg.conf # X.Org server config
+│               │   └── init.d/       # System services
+│               └── root/
+│                   ├── .bashrc
+│                   └── .xinitrc      # X11 session startup
+└── output/                           # Created after build
+    └── images/
+        ├── vortex86_a9100.img        # Bootable disk image
+        ├── bzImage                   # Linux kernel
+        ├── rootfs.ext2               # Root filesystem
+        └── rootfs.tar                # Root filesystem tarball
+```
 
 ## License
+
 This build system includes components under various open-source licenses:
 - Linux kernel: GPL v2
 - Buildroot: GPL v2+
 - BusyBox: GPL v2
 - musl: MIT
-- Openbox: MIT
+- Openbox: GPL v2+
 - X.Org: MIT
 - All other components: their respective licenses
