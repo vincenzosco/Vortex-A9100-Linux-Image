@@ -298,13 +298,13 @@ cu -l /dev/ttyS0 -s 115200
 ### Software Stack
 ```
 ┌──────────────────────────────────────────────┐
-│  Openbox Window Manager (GUI)                    │
+│  Openbox Window Manager (GUI)                │
 ├──────────────────────────────────────────────┤
 │  X.Org Server (VESA/fbdev drivers)           │
 ├──────────────────────────────────────────────┤
-│  opkg (Package Manager) / SSH / Networking    │
+│  opkg (Package Manager) / SSH / Networking   │
 ├──────────────────────────────────────────────┤
-│  BusyBox (init, shell, coreutils, udhcpc)     │
+│  BusyBox (init, shell, coreutils, udhcpc)    │
 ├──────────────────────────────────────────────┤
 │  musl libc (lightweight C library)           │
 ├──────────────────────────────────────────────┤
