@@ -62,11 +62,10 @@ check_prereqs() {
     step "Checking prerequisites..."
     
     if [ ! -d "${BUILDROOT_DIR}" ]; then
-        error "Buildroot directory not found. Run ./build.sh first."
-        exit 1
-    fi
-    
-    if [ ! -d "${IMAGES_DIR}" ] || [ ! -f "${IMAGES_DIR}/bzImage" ]; then
+        warn "Buildroot directory not found. This is expected in CI."
+        warn "Packages will be created with control files and overlay configs only."
+        warn "For packages with real binaries (kernel, modules), run ./build.sh locally first."
+    elif [ ! -d "${IMAGES_DIR}" ] || [ ! -f "${IMAGES_DIR}/bzImage" ]; then
         warn "Build output not found at ${IMAGES_DIR}"
         warn "The feed will be created with control files only (no binaries)."
         warn "Run './build.sh' first to produce binaries for packaging."
