@@ -111,10 +111,23 @@ check_dependencies() {
 download_buildroot() {
     step "Downloading Buildroot ${BUILDROOT_VERSION}..."
 
+    # Verify the existing buildroot directory is complete (has Makefile + configs)
+    # This catches corrupted/partial directories left behind by failed cleanups
     if [ -d "${BUILDROOT_DIR}" ]; then
-        info "Buildroot directory already exists. Skipping download."
-        info "  To re-download, run: rm -rf ${BUILDROOT_DIR} && ./build.sh"
-        return
+        if [ -f "${BUILDROOT_DIR}/Makefile" ] && [ -d "${BUILDROOT_DIR}/configs" ]; then
+            info "Buildroot directory already exists. Skipping download."
+            info "  To re-download, run: rm -rf ${BUILDROOT_DIR} && ./build.sh"
+            return
+        else
+            warn "Buildroot directory is incomplete or corrupted. Re-downloading..."
+            rm -rf "${BUILDROOT_DIR}" 2>/dev/null || true
+            if [ -d "${BUILDROOT_DIR}" ]; then
+                warn "Could not remove the corrupted directory (likely a WSL path length issue)."
+                warn "Please delete it manually, then re-run:"
+                warn "  rm -rf \"${BUILDROOT_DIR}\""
+                exit 1
+            fi
+        fi
     fi
 
     local tarball="/tmp/buildroot-${BUILDROOT_VERSION}.tar.gz"
@@ -282,13 +295,29 @@ do_clean() {
 
 do_distclean() {
     step "Performing full clean..."
+
     if [ -d "${BUILDROOT_DIR}" ]; then
         cd "${BUILDROOT_DIR}"
         make distclean 2>/dev/null || true
         cd "${SCRIPT_DIR}"
+
+        # Robust deletion: use find to delete from deepest paths first
+        # This avoids issues with Windows MAX_PATH on WSL (deeply nested
+        # Buildroot output directories can exceed 260 chars)
+        if ! rm -rf "${BUILDROOT_DIR}" 2>/dev/null; then
+            warn "Standard removal failed, trying deep cleanup..."
+            # Delete deepest files first, then directories
+            find "${BUILDROOT_DIR}" -depth -type f -delete 2>/dev/null || true
+            find "${BUILDROOT_DIR}" -depth -type d -empty -delete 2>/dev/null || true
+            rm -rf "${BUILDROOT_DIR}" 2>/dev/null || true
+        fi
     fi
-    rm -rf "${BUILDROOT_DIR}"
-    rm -rf "${OUTPUT_DIR}"
+
+    if [ -d "${BUILDROOT_DIR}" ]; then
+        warn "Could not fully remove ${BUILDROOT_DIR}"
+        warn "Please delete it manually: rm -rf ${BUILDROOT_DIR}"
+    fi
+
     info "Distclean complete!"
 }
 
