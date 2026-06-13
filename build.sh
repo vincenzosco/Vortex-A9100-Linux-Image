@@ -97,10 +97,10 @@ check_dependencies() {
         error "Missing required dependencies:$missing"
         echo "  On Debian/Ubuntu:"
         echo "    sudo apt-get install -y build-essential bison flex bc wget tar gzip bzip2 xz-utils \\"
-        echo "      patch sed awk findutils file cpio unzip rsync python3"
+        echo "      patch sed gawk findutils file cpio unzip rsync python3"
         echo "  On Arch Linux:"
         echo "    sudo pacman -S --needed base-devel bison flex bc wget tar gzip bzip2 xz patch \\"
-        echo "      sed awk findutils file cpio unzip rsync python"
+        echo "      sed gawk findutils file cpio unzip rsync python"
         exit 1
     fi
 
