@@ -22,7 +22,15 @@ BUILDROOT_DIR="${SCRIPT_DIR}/buildroot"
 IMAGES_DIR="${BUILDROOT_DIR}/output/images"
 TARGET_DIR="${BUILDROOT_DIR}/output/target"
 FEED_DIR="${SCRIPT_DIR}/opkg-feed/feed"
-VERSION="1.0.0"
+# Auto-detect version from git tags + commit count
+# Falls back to "0.0.0" if not in a git repo or no tags
+if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
+    TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^[vV]//' || echo "0.0.0")
+    COUNT=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+    VERSION="${TAG}-build${COUNT}"
+else
+    VERSION="0.0.0"
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -143,8 +151,8 @@ build_kernel_package() {
     mkdir -p "${data_dir}/boot"
     mkdir -p "${control_dir}"
     
-    # Copy control file from source
-    cp "${SCRIPT_DIR}/opkg-feed/packages/kernel/control/control" "${control_dir}/control"
+    # Copy control file from source and update version to match ${VERSION}
+    sed "s/^Version: .*/Version: ${VERSION}/" "${SCRIPT_DIR}/opkg-feed/packages/kernel/control/control" > "${control_dir}/control"
     
     # Copy kernel if available
     if [ -f "${IMAGES_DIR}/bzImage" ]; then
@@ -203,7 +211,8 @@ build_base_system_package() {
     # Post-install script (in TEMP_DIR to avoid modifying source control dir)
     local build_control_dir="${TEMP_DIR}/base-control"
     mkdir -p "${build_control_dir}"
-    cp "${control_dir}/control" "${build_control_dir}/control"
+    # Copy control file and update version to match ${VERSION}
+    sed "s/^Version: .*/Version: ${VERSION}/" "${control_dir}/control" > "${build_control_dir}/control"
     
     cat > "${build_control_dir}/postinst" << 'POSTINST'
 #!/bin/sh
@@ -230,9 +239,9 @@ build_os_update_package() {
     # Update the version in the control file dependencies to match
     local control_file="${control_dir}/control"
     if [ -f "${control_file}" ]; then
-        # Update dependency versions
-        sed -i "s/vortex-kernel (= [0-9.]*)/vortex-kernel (= ${VERSION})/g" "${control_file}"
-        sed -i "s/vortex-base-system (= [0-9.]*)/vortex-base-system (= ${VERSION})/g" "${control_file}"
+        # Update dependency versions (supports >= or = , and any version format)
+        sed -i "s/vortex-kernel ([>=]* [^)]*)/vortex-kernel (>= ${VERSION})/g" "${control_file}"
+        sed -i "s/vortex-base-system ([>=]* [^)]*)/vortex-base-system (>= ${VERSION})/g" "${control_file}"
     fi
     
     # Post-install script for the meta-package

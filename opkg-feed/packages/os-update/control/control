@@ -8,5 +8,5 @@ Description: Full OS update for Vortex86 A9100 (meta-package)
    update-grub && reboot
 Section: meta
 Priority: optional
-Depends: vortex-kernel (= 1.0.0), vortex-base-system (= 1.0.0)
+Depends: vortex-kernel (>= 1.0.0), vortex-base-system (>= 1.0.0)
 Source: https://github.com/vincenzosco/Vortex-A9100-Linux-Image
