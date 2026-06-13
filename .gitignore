@@ -1,0 +1,8 @@
+# Buildroot source tree (downloaded by build.sh)
+buildroot/
+
+# Build output artifacts
+output/
+
+# Log files
+*.log
