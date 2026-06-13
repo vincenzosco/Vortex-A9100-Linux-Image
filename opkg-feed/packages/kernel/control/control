@@ -1,0 +1,10 @@
+Package: vortex-kernel
+Version: 1.0.0
+Architecture: i486
+Maintainer: Vortex86 A9100 Project
+Description: Linux 5.10 LTS kernel and modules for Vortex86 A9100
+ Provides the bzImage kernel and loadable kernel modules
+ built for i486 with FPU emulation and CMPXCHG8B support.
+Section: kernel
+Priority: required
+Source: https://github.com/vincenzosco/Vortex-A9100-Linux-Image

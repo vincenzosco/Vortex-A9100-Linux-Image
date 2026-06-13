@@ -1,0 +1,83 @@
+# GitHub Actions: Build and deploy opkg feed
+#
+# When code is pushed to main, this workflow:
+# 1. Checks out the repo
+# 2. Builds .ipk packages from the latest sources
+# 3. Deploys the feed to GitHub Pages (gh-pages branch)
+#
+# After deployment, the feed is available at:
+#   https://vincenzosco.github.io/Vortex-A9100-Linux-Image/opkg/
+#
+# On the Vortex86 A9100, configure:
+#   src/gz vortex-stable https://vincenzosco.github.io/Vortex-A9100-Linux-Image/opkg/
+# Then: opkg update && opkg install vortex-os-update
+
+name: Deploy opkg Feed
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'board/**'
+      - 'configs/**'
+      - 'scripts/**'
+      - 'opkg-feed/**'
+  workflow_dispatch:
+    # Allow manual trigger from GitHub Actions tab
+
+# Grant permission for GitHub Pages deployment
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq wget tar gzip binutils coreutils
+
+      - name: Determine version
+        id: version
+        run: |
+          # Extract version from latest git tag or generate a timestamp-based version
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+          # Use tag version + commit count for unique versions
+          COUNT=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+          if [ "$TAG" != "0.0.0" ]; then
+            VER="${TAG}-build${COUNT}"
+          else
+            VER="0.0.0-build${COUNT}"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${VER}"
+
+      - name: Create opkg feed
+        run: |
+          chmod +x scripts/create-opkg-feed.sh
+          ./scripts/create-opkg-feed.sh --version "${{ steps.version.outputs.version }}"
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./opkg-feed/feed
+          destination_dir: opkg
+          keep_files: false
+          full_commit_message: "Deploy opkg feed v${{ steps.version.outputs.version }}"
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"

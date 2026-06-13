@@ -1,0 +1,10 @@
+Package: vortex-base-system
+Version: 1.0.0
+Architecture: i486
+Maintainer: Vortex86 A9100 Project
+Description: Base system files for Vortex86 A9100
+ Core system configuration files, init scripts, X11 config,
+ Openbox theme, and opkg configuration. Updated via Buildroot.
+Section: base
+Priority: required
+Source: https://github.com/vincenzosco/Vortex-A9100-Linux-Image

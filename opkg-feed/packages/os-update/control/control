@@ -1,0 +1,12 @@
+Package: vortex-os-update
+Version: 1.0.0
+Architecture: i486
+Maintainer: Vortex86 A9100 Project
+Description: Full OS update for Vortex86 A9100 (meta-package)
+ Depends on vortex-kernel and vortex-base-system to bring
+ the system up to the latest build. After installation, run:
+   update-grub && reboot
+Section: meta
+Priority: optional
+Depends: vortex-kernel (= 1.0.0), vortex-base-system (= 1.0.0)
+Source: https://github.com/vincenzosco/Vortex-A9100-Linux-Image
