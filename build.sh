@@ -216,6 +216,9 @@ build_image() {
     export BR2_JLEVEL=$(nproc 2>/dev/null || echo 4)
     info "Using ${BR2_JLEVEL} parallel jobs"
 
+    # Allow configure scripts to run as root (needed in WSL/containers)
+    export FORCE_UNSAFE_CONFIGURE=1
+
     # Use PIPESTATUS to catch make's exit code (not tee's)
     set +e
     make 2>&1 | tee "${OUTPUT_DIR}/build.log"
