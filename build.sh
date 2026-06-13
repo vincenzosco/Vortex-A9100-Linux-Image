@@ -23,7 +23,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILDROOT_DIR="${SCRIPT_DIR}/buildroot"
-OUTPUT_DIR="${SCRIPT_DIR}/output"
+OUTPUT_DIR="${BUILDROOT_DIR}/output"  # Buildroot's actual output directory
 BUILDROOT_VERSION="2023.02.11"  # Final 2023.02.x LTS release (EOL)
 BUILDROOT_URL="https://buildroot.org/downloads/buildroot-${BUILDROOT_VERSION}.tar.gz"
 
@@ -170,8 +170,20 @@ configure_buildroot() {
 
     cd "${BUILDROOT_DIR}"
 
+    # Clean any stale .config before applying the new defconfig
+    # This avoids legacy option errors when the defconfig changes
+    if [ -f ".config" ]; then
+        warn "Removing stale configuration..."
+        rm -f .config
+    fi
+    # Also clean any savedefconfig from previous runs
+    if [ -f "defconfig" ]; then
+        rm -f defconfig
+    fi
+
     make vortex86_a9100_defconfig || {
         error "Failed to configure Buildroot"
+        cd "${SCRIPT_DIR}"
         exit 1
     }
 
@@ -191,7 +203,13 @@ build_image() {
     export BR2_JLEVEL=$(nproc 2>/dev/null || echo 4)
     info "Using ${BR2_JLEVEL} parallel jobs"
 
-    make 2>&1 | tee "${OUTPUT_DIR}/build.log" || {
+    # Use PIPESTATUS to catch make's exit code (not tee's)
+    set +e
+    make 2>&1 | tee "${OUTPUT_DIR}/build.log"
+    local make_exit=${PIPESTATUS[0]}
+    set -e
+
+    if [ $make_exit -ne 0 ]; then
         error "Build failed! Check ${OUTPUT_DIR}/build.log for details."
         error "Common issues:"
         error "  - Missing dependencies (run ./build.sh again after installing them)"
@@ -199,7 +217,7 @@ build_image() {
         error "  - Network issues (Buildroot downloads many source packages)"
         cd "${SCRIPT_DIR}"
         exit 1
-    }
+    fi
 
     cd "${SCRIPT_DIR}"
     info "Build completed successfully!"
