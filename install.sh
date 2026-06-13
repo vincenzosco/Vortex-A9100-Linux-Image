@@ -107,7 +107,7 @@ draw_progress_bar() {
 }
 
 # Spinner characters
-SPINNER_CHARS=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+SPINNER_CHARS=("-" "\\" "|" "/" "-" "\\" "|" "/" "-" "\\")
 
 # Show progress line with spinner, ETA, speed, and progress bar.
 # Uses \r to overwrite the same line.
@@ -245,15 +245,15 @@ list_devices() {
         local flag=""
         local color="${NC}"
         if [[ "$rm" == "1" ]]; then
-            flag=" ⚡REMOVABLE"
+            flag=" [REMOVABLE]"
             color="${GREEN}"
         fi
         if is_system_disk "$name"; then
-            flag=" ⛔SYSTEM"
+            flag=" [SYSTEM]"
             color="${RED}"
         fi
         if is_mounted "/dev/$name"; then
-            flag+=" 🔗MOUNTED"
+            flag+=" [MOUNTED]"
             color="${YELLOW}"
         fi
 
@@ -262,9 +262,9 @@ list_devices() {
     done
 
     echo ""
-    echo -e "${GREEN}  ⚡REMOVABLE${NC} = Safe to use (USB/SD/CF)"
-    echo -e "${RED}  ⛔SYSTEM${NC}    = System/boot disk - DO NOT USE"
-    echo -e "${YELLOW}  🔗MOUNTED${NC}   = Has mounted partitions"
+    echo -e "${GREEN}  [REMOVABLE]${NC} = Safe to use (USB/SD/CF)"
+    echo -e "${RED}  [SYSTEM]${NC}    = System/boot disk - DO NOT USE"
+    echo -e "${YELLOW}  [MOUNTED]${NC}   = Has mounted partitions"
     echo ""
 }
 
@@ -410,11 +410,11 @@ select_device_interactive() {
 
         local flag=""
         if [[ "$rm" == "1" ]]; then
-            flag="${GREEN}⚡ REMOVABLE${NC}"
+            flag="${GREEN}[REMOVABLE]${NC}"
         elif is_system_disk "$name"; then
-            flag="${RED}⛔ SYSTEM DISK${NC}"
+            flag="${RED}[SYSTEM DISK]${NC}"
         elif is_mounted "/dev/$name"; then
-            flag="${YELLOW}🔗 MOUNTED${NC}"
+            flag="${YELLOW}[MOUNTED]${NC}" 
         fi
 
         printf "  %2d)  /dev/%-8s  %-6s  %-30s  %b\n" \
@@ -560,7 +560,7 @@ validate_image() {
             mbr_sig=$(dd if="$image" bs=1 skip=510 count=2 2>/dev/null | xxd -p 2>/dev/null)
         fi
         if [[ "$mbr_sig" == "55aa" ]]; then
-            info "Image has valid MBR boot signature ✓"
+            info "Image has valid MBR boot signature"
         else
             warn "Image does NOT have a valid MBR signature! Is this a bootable disk image?"
             warn "MBR signature: $mbr_sig (expected: 55aa)"
@@ -611,7 +611,7 @@ check_device_space() {
         info "You can resize the partition later with: sudo parted /dev/sdX resizepart 2 100%"
     fi
 
-    info "Size check passed ✓"
+    info "Size check passed"
 }
 
 # === Final confirmation ===
@@ -818,7 +818,7 @@ write_image() {
 
             # If the device is slow to respond, show a waiting message
             if [[ "$stall_count" -ge 5 ]]; then
-                printf "\r  ⏳ Waiting for device... (%ds stalled)" "$stall_count"
+                printf "\r  [WAITING] Device stalled... (%ds)" "$stall_count"
             elif [[ "$bytes_copied" -gt 0 ]]; then
                 show_progress_line "$spinner_idx" "$bytes_copied" "$image_size" "$speed_bps" "$eta"
             else
@@ -909,11 +909,11 @@ verify_write() {
 
     if [[ "$image_checksum" == "$dev_checksum" ]]; then
         echo ""
-        info "${GREEN}✓ VERIFICATION PASSED - Written data matches the image exactly${NC}"
+        info "${GREEN}[PASS] VERIFICATION PASSED - Written data matches the image exactly${NC}"
         return 0
     else
         echo ""
-        warn "${RED}✗ VERIFICATION FAILED - Written data does NOT match the image${NC}"
+        warn "${RED}[FAIL] VERIFICATION FAILED - Written data does NOT match the image${NC}"
         warn "  The device may be faulty or the write was interrupted."
         warn "  Try writing again to a different device."
         return 1

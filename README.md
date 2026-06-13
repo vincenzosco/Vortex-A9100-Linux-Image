@@ -83,7 +83,7 @@ cd Vortex-A9100-Linux-Image
 ### Build Process
 
 The build system:
-1. Downloads Buildroot 2023.02.14 (last version with reliable i486 support)
+1. Downloads Buildroot 2023.02.11 (final 2023.02.x LTS release)
 2. Applies the custom Vortex86 A9100 board configuration
 3. Downloads and patches Linux 5.10 LTS kernel (with CMPXCHG8B emulation for i486)
 4. Cross-compiles the toolchain (musl libc, GCC)

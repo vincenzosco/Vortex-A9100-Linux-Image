@@ -24,7 +24,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILDROOT_DIR="${SCRIPT_DIR}/buildroot"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
-BUILDROOT_VERSION="2023.02.14"  # Last version with reliable i486 support
+BUILDROOT_VERSION="2023.02.11"  # Final 2023.02.x LTS release (EOL)
 BUILDROOT_URL="https://buildroot.org/downloads/buildroot-${BUILDROOT_VERSION}.tar.gz"
 
 RED='\033[0;31m'
