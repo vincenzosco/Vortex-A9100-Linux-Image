@@ -59,7 +59,10 @@ hardware, the system can then update itself over the internet.
 # Update package list from GitHub Pages feed
 opkg update
 
-# Install full OS update
+# Upgrade ALL vortex packages to latest versions
+opkg upgrade
+
+# Or install a specific package
 opkg install vortex-os-update
 
 # After installation: reboot
@@ -74,12 +77,15 @@ src/gz vortex-stable https://vincenzosco.github.io/Vortex-A9100-Linux-Image/opkg
 ### Manual feed deployment
 
 ```bash
-# Build packages from the latest build output
-./scripts/create-opkg-feed.sh --version 1.0.0
+# Build packages from the latest build output (auto-versioned from git tags)
+./scripts/create-opkg-feed.sh
 
 # Deploy to GitHub Pages
-./scripts/deploy-feed.sh --version 1.0.0
+./scripts/deploy-feed.sh
 ```
+
+Versions are auto-detected from git tags + commit count (e.g., `1.0.0-build42`).
+To override: `./scripts/create-opkg-feed.sh --version 2.0.0`
 
 > **Note:** GitHub Pages must be enabled in the repository settings
 > (Settings > Pages > Deploy from `gh-pages` branch).
@@ -419,6 +425,7 @@ Then rebuild: `./build.sh`
 - Try: `./build.sh distclean && ./build.sh`
 - Common: missing network access (Buildroot downloads many packages)
 - On WSL: long path issues (`Function not implemented` errors) — the `.gitignore` excludes `buildroot/`
+- On WSL: if you get `configure: error: you should not run configure as root` — this is fixed by setting `FORCE_UNSAFE_CONFIGURE=1` (already in `build.sh`)
 
 ### Legacy Configuration Error
 ```

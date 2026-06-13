@@ -1,5 +1,6 @@
 # Buildroot source tree (downloaded by build.sh)
 buildroot/
+buildroot-*/
 
 # Build output artifacts
 output/
