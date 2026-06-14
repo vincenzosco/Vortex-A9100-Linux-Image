@@ -89,10 +89,14 @@ check_dependencies() {
     done
 
     # Check for development libraries (needed by Buildroot packages)
-    # uuid-dev: required by host-e2fsprogs
+    # uuid-dev + libblkid-dev: required by host-e2fsprogs
     if [ ! -f /usr/include/uuid/uuid.h ] && [ ! -f /usr/include/uuid.h ]; then
         warn "uuid-dev not found (needed by host-e2fsprogs)"
         warn "  Install with: sudo apt-get install uuid-dev"
+    fi
+    if [ ! -f /usr/include/blkid/blkid.h ] && [ ! -f /usr/include/blkid.h ]; then
+        warn "libblkid-dev not found (needed by host-e2fsprogs)"
+        warn "  Install with: sudo apt-get install libblkid-dev"
     fi
 
     # Check for QEMU (useful for testing but not required)
