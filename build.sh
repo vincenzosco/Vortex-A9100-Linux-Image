@@ -230,6 +230,15 @@ build_image() {
     # Allow configure scripts to run as root (needed in WSL/containers)
     export FORCE_UNSAFE_CONFIGURE=1
 
+    # Remove irrelevant or1k (OpenRISC) GCC patches that fail on GCC 11.4.0
+    # These patches try to create files that already exist in GCC 11.4.0 source
+    # and are not needed for our x86 (i486) build.
+    GCC_PATCH_DIR="${BUILDROOT_DIR}/package/gcc/11.4.0"
+    for patch in 0001-or1k-Add-mcmodel 0002-or1k-Use-cmodel 0003-gcc-define-_REENTRANT 0006-or1k-Only-define; do
+        rm -f "${GCC_PATCH_DIR}/${patch}"*.patch 2>/dev/null || true
+    done
+    info "Removed irrelevant or1k GCC patches"
+
     # Sanitize PATH: filter out entries with spaces/tabs/newlines
     # Buildroot's dependency check rejects paths with these characters.
     # WSL typically appends Windows paths like /mnt/c/Program Files/...
