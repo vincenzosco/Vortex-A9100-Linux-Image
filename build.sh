@@ -246,6 +246,19 @@ build_image() {
     export PATH="${NEW_PATH#:}"
     info "Sanitized PATH for Buildroot compatibility"
 
+    # Ensure host-e2fsprogs can find system uuid/blkid libraries via pkg-config
+    # Buildroot's configure runs with PKG_CONFIG_LIBDIR pointing to its own host dir,
+    # so system .pc files (uuid, blkid) are not found unless linked in.
+    HOST_PKG_DIR="${OUTPUT_DIR}/host/lib/pkgconfig"
+    for pc in uuid blkid; do
+        # Find the system .pc file
+        SYS_PC=$(find /usr -name "${pc}.pc" -print -quit 2>/dev/null || true)
+        if [ -n "$SYS_PC" ] && [ ! -f "${HOST_PKG_DIR}/${pc}.pc" ]; then
+            ln -sf "$SYS_PC" "${HOST_PKG_DIR}/${pc}.pc"
+            info "Linked ${pc}.pc into Buildroot pkgconfig"
+        fi
+    done
+
     # Use PIPESTATUS to catch make's exit code (not tee's)
     set +e
     make 2>&1 | tee "${OUTPUT_DIR}/build.log"
