@@ -88,6 +88,13 @@ check_dependencies() {
         fi
     done
 
+    # Check for development libraries (needed by Buildroot packages)
+    # uuid-dev: required by host-e2fsprogs
+    if [ ! -f /usr/include/uuid/uuid.h ] && [ ! -f /usr/include/uuid.h ]; then
+        warn "uuid-dev not found (needed by host-e2fsprogs)"
+        warn "  Install with: sudo apt-get install uuid-dev"
+    fi
+
     # Check for QEMU (useful for testing but not required)
     if which qemu-system-i386 >/dev/null 2>&1; then
         info "QEMU found - you can test the image with: qemu-system-i386 -hda output/images/vortex86_a9100.img"
