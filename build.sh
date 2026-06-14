@@ -250,6 +250,7 @@ build_image() {
     # Buildroot's configure runs with PKG_CONFIG_LIBDIR pointing to its own host dir,
     # so system .pc files (uuid, blkid) are not found unless linked in.
     HOST_PKG_DIR="${OUTPUT_DIR}/host/lib/pkgconfig"
+    mkdir -p "${HOST_PKG_DIR}"
     for pc in uuid blkid; do
         # Find the system .pc file
         SYS_PC=$(find /usr -name "${pc}.pc" -print -quit 2>/dev/null || true)
