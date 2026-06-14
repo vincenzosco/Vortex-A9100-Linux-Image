@@ -219,6 +219,22 @@ build_image() {
     # Allow configure scripts to run as root (needed in WSL/containers)
     export FORCE_UNSAFE_CONFIGURE=1
 
+    # Sanitize PATH: filter out entries with spaces/tabs/newlines
+    # Buildroot's dependency check rejects paths with these characters.
+    # WSL typically appends Windows paths like /mnt/c/Program Files/...
+    OLD_IFS="$IFS"
+    IFS=':'
+    NEW_PATH=""
+    for p in $PATH; do
+        case "$p" in
+            *[\ \	\"]*) ;;
+            *) NEW_PATH="${NEW_PATH}:${p}" ;;
+        esac
+    done
+    IFS="$OLD_IFS"
+    export PATH="${NEW_PATH#:}"
+    info "Sanitized PATH for Buildroot compatibility"
+
     # Use PIPESTATUS to catch make's exit code (not tee's)
     set +e
     make 2>&1 | tee "${OUTPUT_DIR}/build.log"
