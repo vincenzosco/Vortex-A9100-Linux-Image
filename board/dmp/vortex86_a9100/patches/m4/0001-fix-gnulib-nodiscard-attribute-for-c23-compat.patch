@@ -1,0 +1,30 @@
+From: Vincenzo <vincenzo@vortex86-builder>
+Date: Tue, 16 Jun 2026 15:30:00 +0200
+Subject: [PATCH] fix gnulib nodiscard attribute for C23 compat
+
+GCC 15+ defaults to -std=c23, where [[nodiscard]] is a standard
+attribute. The gnulib code in m4 1.4.19 tries to use [[__nodiscard__]]
+when __STDC_VERSION__ >= 201710L, but the attribute placement in
+some headers (e.g., gl_oset.h) is incompatible with C23's stricter
+attribute parsing rules, causing:
+
+  gl_oset.h:275: error: expected identifier or '(' before 'int'
+
+Fix by disabling the [[nodiscard]] path so that the fallback
+__attribute__((__warn_unused_result__)) is used instead.
+
+Signed-off-by: Vincenzo <vincenzo@vortex86-builder>
+
+diff --git a/lib/config.hin b/lib/config.hin
+index 4abeaac..b8c7e3c 100644
+--- a/lib/config.hin
++++ b/lib/config.hin
+@@ -2586,7 +2586,7 @@
+ # define _GL_ATTRIBUTE_MAYBE_UNUSED
+ #endif
+ 
+-#if 201710L < __STDC_VERSION__
++#if 0 /* disabled for C23 compat */
+ # define _GL_ATTRIBUTE_NODISCARD [[__nodiscard__]]
+ #elif _GL_HAS_ATTRIBUTE (warn_unused_result)
+ # define _GL_ATTRIBUTE_NODISCARD __attribute__ ((__warn_unused_result__))

@@ -98,6 +98,11 @@ check_dependencies() {
         warn "libblkid-dev not found (needed by host-e2fsprogs)"
         warn "  Install with: sudo apt-get install libblkid-dev"
     fi
+    # libcrypt-dev: required by host-mkpasswd (for <crypt.h>)
+    if [ ! -f /usr/include/crypt.h ]; then
+        warn "libcrypt-dev not found (needed by host-mkpasswd)"
+        warn "  Install with: sudo apt-get install libcrypt-dev"
+    fi
 
     # Check for QEMU (useful for testing but not required)
     if which qemu-system-i386 >/dev/null 2>&1; then
@@ -268,6 +273,10 @@ build_image() {
             info "Linked ${pc}.pc into Buildroot pkgconfig"
         fi
     done
+
+    # Force C17 standard for host builds to avoid C23 compatibility issues
+    # GCC 15+ defaults to C23, which breaks gnulib code in m4, util-linux, etc.
+    export HOST_CFLAGS="-std=gnu17 ${HOST_CFLAGS:-}"
 
     # Use PIPESTATUS to catch make's exit code (not tee's)
     set +e
