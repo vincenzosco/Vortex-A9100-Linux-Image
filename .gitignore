@@ -1,3 +1,7 @@
+# Host compiler wrappers (created by build.sh for GCC 15 C23 compatibility)
+.gcc-wrap
+.g++-wrap
+
 # Buildroot source tree (downloaded by build.sh)
 buildroot/
 buildroot-*/

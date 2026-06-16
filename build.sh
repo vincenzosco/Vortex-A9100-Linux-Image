@@ -274,6 +274,29 @@ build_image() {
         fi
     done
 
+    # Create GCC wrapper to force C17 standard for all host builds.
+    # GCC 15 defaults to C23, which breaks many Buildroot packages (autotools,
+    # gnulib, GMP, etc.) that rely on pre-C23 behavior:
+    #   - 'void g(){}' meaning "unspecified parameters" (C23 treats as "no params")
+    #   - 'bool' as a typedef (C23 makes it a keyword)
+    #   - 'nodiscard' attribute (C23 makes it a keyword)
+    # Target (cross-compiler) builds are not affected.
+    GCC_WRAPPER="${SCRIPT_DIR}/.gcc-wrap"
+    GXX_WRAPPER="${SCRIPT_DIR}/.g++-wrap"
+    rm -f "${GCC_WRAPPER}" "${GXX_WRAPPER}"
+    cat > "${GCC_WRAPPER}" << 'WRAPEOF'
+#!/bin/bash
+exec gcc -std=gnu17 "$@"
+WRAPEOF
+    cat > "${GXX_WRAPPER}" << 'WRAPEOF'
+#!/bin/bash
+exec g++ -std=gnu++17 "$@"
+WRAPEOF
+    chmod +x "${GCC_WRAPPER}" "${GXX_WRAPPER}"
+    export HOSTCC="${GCC_WRAPPER}"
+    export HOSTCXX="${GXX_WRAPPER}"
+    info "Set HOSTCC/HOSTCXX wrappers for C17 host build compatibility"
+
     # Use PIPESTATUS to catch make's exit code (not tee's)
     set +e
     make 2>&1 | tee "${OUTPUT_DIR}/build.log"
