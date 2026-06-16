@@ -1,0 +1,29 @@
+From: Vincenzo <vincenzo@vortex86-builder>
+Date: Tue, 16 Jun 2026 15:00:00 +0200
+Subject: [PATCH] tdb: replace 'typedef int bool' with '#include <stdbool.h>'
+
+GCC 15+ defaults to -std=c23, where 'bool' is a keyword.
+The 'typedef int bool;' in lib/ext2fs/tdb.c is illegal in C23
+and causes a compilation error:
+
+  error: 'bool' cannot be defined via 'typedef'
+  note: 'bool' is a keyword with '-std=c23' onwards
+
+Fix by including <stdbool.h> instead, which works in all C standards
+(C99 through C23) and properly defines 'bool' as _Bool.
+
+Signed-off-by: Vincenzo <vincenzo@vortex86-builder>
+
+diff --git a/lib/ext2fs/tdb.c b/lib/ext2fs/tdb.c
+index 188a9b8..d5b86d3 100644
+--- a/lib/ext2fs/tdb.c
++++ b/lib/ext2fs/tdb.c
+@@ -110,7 +110,7 @@
+ #endif
+ #endif
+ 
+-typedef int bool;
++#include <stdbool.h>
+ 
+ #include "tdb.h"
+ 
