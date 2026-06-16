@@ -286,11 +286,14 @@ build_image() {
     rm -f "${GCC_WRAPPER}" "${GXX_WRAPPER}"
     cat > "${GCC_WRAPPER}" << 'WRAPEOF'
 #!/bin/bash
-exec gcc -std=gnu17 "$@"
+# Force C17 to avoid C23 issues (bool keyword, nodiscard, void(), etc.)
+# Downgrade incompatible-pointer-types from error to warning because
+# GCC 15+ promotes this to error, breaking older code (e.g. host-gcc libiberty)
+exec gcc -std=gnu17 -Wno-error=incompatible-pointer-types "$@"
 WRAPEOF
     cat > "${GXX_WRAPPER}" << 'WRAPEOF'
 #!/bin/bash
-exec g++ -std=gnu++17 "$@"
+exec g++ -std=gnu++17 -Wno-error=incompatible-pointer-types "$@"
 WRAPEOF
     chmod +x "${GCC_WRAPPER}" "${GXX_WRAPPER}"
     export HOSTCC="${GCC_WRAPPER}"
