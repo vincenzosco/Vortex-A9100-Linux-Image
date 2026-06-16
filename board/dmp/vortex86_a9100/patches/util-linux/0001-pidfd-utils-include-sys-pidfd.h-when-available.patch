@@ -1,0 +1,31 @@
+From: Vincenzo <vincenzo@example.com>
+Date: Mon, 16 Jun 2026 14:00:00 +0200
+Subject: [PATCH] pidfd-utils: include <sys/pidfd.h> when available
+
+On glibc 2.36+, pidfd_open() and pidfd_send_signal() are declared in
+<sys/pidfd.h>, not in <sys/types.h>.  Without including this header,
+the compiler sees implicit declarations when HAVE_PIDFD_OPEN and
+HAVE_PIDFD_SEND_SIGNAL are defined (meaning configure found the
+functions in libc), but the declarations are not visible.
+
+Fix by adding #include <sys/pidfd.h> inside the #if block where
+UL_HAVE_PIDFD is defined, guarded by __has_include for portability.
+
+Signed-off-by: Vincenzo <vincenzo@example.com>
+
+diff --git a/include/pidfd-utils.h b/include/pidfd-utils.h
+index e1f1af0..1a2b3c4 100644
+--- a/include/pidfd-utils.h
++++ b/include/pidfd-utils.h
+@@ -5,6 +5,10 @@
+ # include <sys/syscall.h>
+ # if defined(SYS_pidfd_send_signal) && defined(SYS_pidfd_open)
+ #  include <sys/types.h>
++#  ifdef __has_include
++#   if __has_include(<sys/pidfd.h>)
++#    include <sys/pidfd.h>
++#   endif
++#  endif
+ 
+ #  ifndef HAVE_PIDFD_SEND_SIGNAL
+ static inline int pidfd_send_signal(int pidfd, int sig, siginfo_t *info,

@@ -14,11 +14,12 @@
 - **GUI:** X.Org + Openbox — lightweight, fast desktop environment
 - **Bootloader:** GRUB (supports booting from CF cards, IDE SSDs, USB, hard drives)
 - **Network:** DHCP client, SSH server, basic networking tools (RDC R6040 + Realtek 8139)
-- **Installer:** Interactive `install.sh` with device detection, safety checks, ETA progress bar
+- **Installer:** Interactive `install.sh` (Linux) / `install.ps1` (Windows) — device detection, safety checks, ETA progress bar
 - **Updates:** OTA system updates via `opkg update && opkg install vortex-os-update`
 
 ## Quick Start
 
+### Linux
 ```bash
 # Clone
 git clone https://github.com/vincenzosco/Vortex-A9100-Linux-Image.git
@@ -30,6 +31,23 @@ cd Vortex-A9100-Linux-Image
 # Write to your CF card / USB drive / hard drive
 sudo ./install.sh
 ```
+
+### Windows (WSL2)
+```batch
+:: Clone (use Git for Windows or WSL)
+git clone https://github.com/vincenzosco/Vortex-A9100-Linux-Image.git
+cd Vortex-A9100-Linux-Image
+
+:: Build the image (runs inside WSL2)
+build.bat
+
+:: Write to your USB/CF drive (PowerShell as Administrator)
+.\install.ps1
+```
+
+> **Prerequisites for Windows:** Windows 10 2004+ / Windows 11, WSL2 with Ubuntu, and
+> [Windows Terminal](https://aka.ms/terminal) (recommended). See
+> [Building on Windows](#building-on-windows) for detailed setup.
 
 ## OTA Updates via opkg
 
@@ -93,16 +111,19 @@ To override: `./scripts/create-opkg-feed.sh --version 2.0.0`
 ## System Requirements
 
 ### Build Host
-- **OS:** Linux (native) or WSL2 on Windows
+- **OS:** Linux (native or WSL2) or Windows 10/11 with WSL2
 - **Disk:** ~5GB free space
 - **RAM:** 2GB+ recommended
 - **CPU:** Any x86_64 (cross-compilation)
 
-### Build Dependencies (Linux)
+### Build Dependencies
+
+#### Linux (Native)
 ```bash
 # Debian/Ubuntu
 sudo apt-get install -y build-essential bison flex bc wget tar gzip \
-  bzip2 xz-utils patch sed gawk findutils file cpio unzip rsync python3
+  bzip2 xz-utils patch sed gawk findutils file cpio unzip rsync python3 \
+  uuid-dev libblkid-dev
 
 # Arch Linux
 sudo pacman -S --needed base-devel bison flex bc wget tar gzip bzip2 \
@@ -110,7 +131,19 @@ sudo pacman -S --needed base-devel bison flex bc wget tar gzip bzip2 \
 
 # Fedora
 sudo dnf install -y @development-tools bison flex bc wget tar gzip \
-  bzip2 xz patch sed gawk findutils file cpio unzip rsync python3
+  bzip2 xz patch sed gawk findutils file cpio unzip rsync python3 \
+  libuuid-devel libblkid-devel
+```
+
+#### Windows (WSL2)
+The build runs inside WSL2. After installing WSL2 + Ubuntu, install the
+Linux dependencies listed above inside the WSL environment:
+
+```bash
+# Inside WSL2 Ubuntu:
+sudo apt-get update && sudo apt-get install -y build-essential bison flex bc \
+  wget tar gzip bzip2 xz-utils patch sed gawk findutils file cpio unzip \
+  rsync python3 uuid-dev libblkid-dev
 ```
 
 ### Target Hardware (Vortex86 A9100)
@@ -124,6 +157,8 @@ sudo dnf install -y @development-tools bison flex bc wget tar gzip \
 | **Serial** | ttyS0 at 115200 baud (for debugging) |
 
 ## Building the Image
+
+### Linux (Native)
 
 ```bash
 cd Vortex-A9100-Linux-Image
@@ -141,6 +176,27 @@ cd Vortex-A9100-Linux-Image
 # Quick clean (keeps downloaded sources)
 ./build.sh clean
 ```
+
+### Windows (WSL2)
+
+```batch
+cd Vortex-A9100-Linux-Image
+
+:: Full build — automatically uses WSL2
+build.bat
+
+:: Clean build artifacts
+build.bat clean
+
+:: Full clean (removes downloaded sources too)
+build.bat distclean
+```
+
+The `build.bat` script:
+1. Verifies WSL2 is installed with Ubuntu
+2. Checks build dependencies inside WSL
+3. Runs `build.sh` inside the WSL environment
+4. The `buildroot/` directory is shared between Windows and WSL
 
 ### Build Process
 
@@ -165,7 +221,7 @@ After the build completes, files are in `buildroot/output/images/`:
 
 ## Installation to Real Hardware
 
-### Automated Installer (Recommended)
+### Linux (install.sh)
 
 The project includes a production-grade interactive installer with safety checks:
 
@@ -183,7 +239,7 @@ sudo ./install.sh /dev/sdc
 sudo ./install.sh /dev/sdc --verify
 ```
 
-#### Installer Features
+#### Installer Features (Linux)
 
 | Feature | Details |
 |---------|---------|
@@ -198,12 +254,48 @@ sudo ./install.sh /dev/sdc --verify
 | **Post-write verification** | Optional SHA256 checksum comparison |
 | **pv support** | Full progress bar if `pv` is installed (`sudo apt-get install pv`) |
 
-### Manual Write (Advanced)
+### Windows (install.ps1)
+
+The Windows installer provides equivalent functionality via PowerShell:
+
+```powershell
+# Run PowerShell as Administrator, then:
+.\install.ps1                      # Interactive mode
+.\install.ps1 -Device 2            # Write to PhysicalDrive2
+.\install.ps1 -List                # Show available drives
+.\install.ps1 -Device 2 -Verify    # Write and verify
+```
+
+#### Installer Features (Windows)
+
+| Feature | Details |
+|---------|---------|
+| **Drive listing** | Shows all physical drives with model, size, interface |
+| **System disk protection** | Refuses to write to PhysicalDrive0 (system disk) |
+| **Mount detection** | Warns if the drive has mounted partitions |
+| **MBR signature check** | Verifies the image is bootable |
+| **Dual confirmation** | Requires drive number + "YES" confirmation |
+| **Progress display** | Progress bar updated every 5 seconds with ETA |
+| **SHA256 verification** | Optional read-back checksum comparison |
+| **Direct I/O** | Writes directly via `\\.\PhysicalDriveN` |
+
+> **Note:** The Windows installer writes directly to the physical drive using
+> `.NET's System.IO.File`. This is equivalent to `dd` on Linux. All data on
+> the target drive will be destroyed.
+
+### Manual Write (Linux)
 
 ```bash
 # Write disk image to SD card / CF card / USB drive
 sudo dd if=buildroot/output/images/vortex86_a9100.img of=/dev/sdX bs=4M status=progress conv=fsync
 sync
+```
+
+### Manual Write (Windows)
+
+```powershell
+# Use Rufus (recommended GUI tool): https://rufus.ie/
+# Or use dd for Windows from the command line
 ```
 
 ### Partition-Based Install (Alternative)
@@ -237,7 +329,8 @@ qemu-system-i386 -m 256 -hda buildroot/output/images/vortex86_a9100.img -vga std
 
 1. **Prepare your storage media:**
    - CF card via USB adapter, IDE SSD, or USB drive
-   - Run: `sudo ./install.sh` and select your device
+   - Linux: `sudo ./install.sh` and select your device
+   - Windows: `.\install.ps1` (as Administrator)
 
 2. **Connect to the Vortex86 A9100 board:**
    - VGA display + PS/2 keyboard (for GUI)
@@ -427,6 +520,17 @@ Then rebuild: `./build.sh`
 - On WSL: long path issues (`Function not implemented` errors) — the `.gitignore` excludes `buildroot/`
 - On WSL: if you get `configure: error: you should not run configure as root` — this is fixed by setting `FORCE_UNSAFE_CONFIGURE=1` (already in `build.sh`)
 
+### host-util-linux Build Failure (pidfd_open)
+**Error:** `implicit declaration of function 'pidfd_open'` / `'pidfd_send_signal'`
+
+**Cause:** On glibc 2.36+ (e.g., Ubuntu 24.04+), `pidfd_open()` and `pidfd_send_signal()` are
+declared in `<sys/pidfd.h>` rather than in `<sys/types.h>`. The util-linux 2.38 `pidfd-utils.h`
+only includes `<sys/types.h>`, missing the declaration.
+
+**Fix:** A custom patch (`board/dmp/vortex86_a9100/patches/util-linux/0001-pidfd-utils-include-sys-pidfd.h-when-available.patch`)
+adds `#include <sys/pidfd.h>` when available, guarded by `__has_include`. This is applied
+automatically during the build.
+
 ### Legacy Configuration Error
 ```
 Makefile.legacy:9: *** "You have legacy configuration in your .config!"
@@ -453,9 +557,9 @@ Makefile.legacy:9: *** "You have legacy configuration in your .config!"
 - For other NICs, enable them via `./build.sh linux-config`
 
 ### Installer Won't Detect Device
-- Check: `lsblk -d` — does your device appear?
+- **Linux:** Check: `lsblk -d` — does your device appear?
+- **Windows:** Check: `Get-WmiObject Win32_DiskDrive` in PowerShell
 - For CF card readers: try a different USB port or adapter
-- Some USB-to-CF adapters present as `/dev/sdX`
 
 ### opkg update Fails with SSL Error
 - Ensure the target has network access and CA certificates installed
@@ -467,8 +571,10 @@ Makefile.legacy:9: *** "You have legacy configuration in your .config!"
 
 ```
 Vortex-A9100-Linux-Image/
-├── build.sh                          # Main build orchestrator
-├── install.sh                        # Interactive image installer
+├── build.sh                          # Main build orchestrator (Linux)
+├── build.bat                         # Build wrapper (Windows / WSL2)
+├── install.sh                        # Interactive image installer (Linux)
+├── install.ps1                       # Disk image installer (Windows PowerShell)
 ├── .gitignore                        # Excludes buildroot/ and output/
 ├── README.md                         # This file
 ├── configs/
@@ -483,8 +589,10 @@ Vortex-A9100-Linux-Image/
 │           ├── post-build.sh         # Post-build filesystem setup
 │           ├── post-image.sh         # Bootable disk image creation
 │           ├── patches/
-│           │   └── linux/
-│           │       └── 0001-i486-cmpxchg8b-emulation.patch
+│           │   ├── linux/
+│           │   │   └── 0001-i486-cmpxchg8b-emulation.patch
+│           │   └── util-linux/
+│           │       └── 0001-pidfd-utils-include-sys-pidfd.h-when-available.patch
 │           └── overlay/
 │               ├── etc/
 │               │   ├── inittab       # BusyBox init configuration
