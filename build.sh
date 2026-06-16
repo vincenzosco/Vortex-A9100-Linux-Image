@@ -274,10 +274,6 @@ build_image() {
         fi
     done
 
-    # Force C17 standard for host builds to avoid C23 compatibility issues
-    # GCC 15+ defaults to C23, which breaks gnulib code in m4, util-linux, etc.
-    export HOST_CFLAGS="-std=gnu17 ${HOST_CFLAGS:-}"
-
     # Use PIPESTATUS to catch make's exit code (not tee's)
     set +e
     make 2>&1 | tee "${OUTPUT_DIR}/build.log"
