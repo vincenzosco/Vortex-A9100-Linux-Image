@@ -300,6 +300,26 @@ WRAPEOF
     export HOSTCXX="${GXX_WRAPPER}"
     info "Set HOSTCC/HOSTCXX wrappers for C17 host build compatibility"
 
+    # Patch ncurses.mk to generate terminfo in staging after install.
+    # During cross-compilation, the host tic (terminfo compiler) may not run
+    # during 'make install', leaving staging without compiled terminfo entries.
+    # This causes NCURSES_TARGET_CLEANUP_TERMINFO to fail when it tries to
+    # copy terminfo from staging to target.
+    NCURSES_MK="${BUILDROOT_DIR}/package/ncurses/ncurses.mk"
+    if ! grep -q 'NCURSES_GENERATE_TERMINFO_STAGING' "${NCURSES_MK}" 2>/dev/null; then
+        sed -i '/^define NCURSES_TARGET_CLEANUP_TERMINFO$/i\
+# Generate terminfo in staging explicitly (host tic may not run during cross-compile)\
+define NCURSES_GENERATE_TERMINFO_STAGING\
+\tmkdir -p $(STAGING_DIR)/usr/share/terminfo\
+\t$(HOST_DIR)/bin/tic -o $(STAGING_DIR)/usr/share/terminfo -x $(@D)/misc/terminfo.src\
+endef\
+NCURSES_POST_INSTALL_STAGING_HOOKS += NCURSES_GENERATE_TERMINFO_STAGING\
+' "${NCURSES_MK}"
+        info "Patched ncurses.mk: generate terminfo in staging via host tic"
+    else
+        info "ncurses.mk already patched for terminfo generation"
+    fi
+
     # Use PIPESTATUS to catch make's exit code (not tee's)
     set +e
     make 2>&1 | tee "${OUTPUT_DIR}/build.log"
