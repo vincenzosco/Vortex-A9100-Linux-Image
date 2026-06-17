@@ -289,11 +289,11 @@ build_image() {
 # Force C17 to avoid C23 issues (bool keyword, nodiscard, void(), etc.)
 # Downgrade incompatible-pointer-types from error to warning because
 # GCC 15+ promotes this to error, breaking older code (e.g. host-gcc libiberty)
-exec gcc -std=gnu17 -Wno-error=incompatible-pointer-types "$@"
+exec gcc -std=gnu17 -Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration "$@"
 WRAPEOF
     cat > "${GXX_WRAPPER}" << 'WRAPEOF'
 #!/bin/bash
-exec g++ -std=gnu++17 -Wno-error=incompatible-pointer-types "$@"
+exec g++ -std=gnu++17 -Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration "$@"
 WRAPEOF
     chmod +x "${GCC_WRAPPER}" "${GXX_WRAPPER}"
     export HOSTCC="${GCC_WRAPPER}"
