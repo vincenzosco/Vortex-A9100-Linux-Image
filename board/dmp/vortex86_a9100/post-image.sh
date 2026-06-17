@@ -121,12 +121,29 @@ echo "  Installing GRUB..."
 sudo mkdir -p "${MOUNT_DIR}/boot/grub"
 sudo cp "${BOARD_DIR}/grub.cfg" "${MOUNT_DIR}/boot/grub/" 2>/dev/null || true
 
-# Run grub-install
-sudo "${GRUB_INSTALL}" \
+# Run grub-install with --force (needed for loop devices) and --removable (for USB boot)
+echo "  Running grub-install on ${LOOP_DEV}..."
+if sudo "${GRUB_INSTALL}" \
     --target=i386-pc \
     --boot-directory="${MOUNT_DIR}/boot" \
-    --modules="bios part_msdos ext2 fat" \
-    "${LOOP_DEV}" 2>&1 || echo "WARNING: GRUB install failed. You may need to install GRUB manually."
+    --modules="part_msdos ext2" \
+    --removable \
+    --force \
+    "${LOOP_DEV}" 2>&1; then
+    echo "  GRUB installed successfully."
+else
+    echo "ERROR: grub-install failed! The image will not be bootable."
+    echo "Trying alternative method: grub-bios-setup..."
+    if which grub-bios-setup >/dev/null 2>&1; then
+        sudo grub-bios-setup --force --directory="${MOUNT_DIR}/boot/grub/i386-pc" "${LOOP_DEV}" 2>&1 || true
+    fi
+    # Don't exit - let the image be created anyway, user can install GRUB manually
+fi
+
+# Verify the MBR was written
+sudo dd if="${LOOP_DEV}" bs=512 count=1 2>/dev/null | strings | grep -q GRUB && \
+    echo "  MBR verified: GRUB boot code present." || \
+    echo "  WARNING: GRUB boot code not detected in MBR!"
 
 sudo umount "${MOUNT_DIR}"
 
