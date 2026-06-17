@@ -72,6 +72,20 @@ fi
 # Ensure opkg lists directory exists
 mkdir -p "${TARGET_DIR}/var/lib/opkg/lists"
 
+# --- Make the OS installer executable ---
+if [ -f "${TARGET_DIR}/usr/bin/vortex-install" ]; then
+    chmod 755 "${TARGET_DIR}/usr/bin/vortex-install"
+    echo "Post-build: vortex-install made executable"
+fi
+
+# --- Enable live mode: X11 auto-start on tty1 ---
+# The live image auto-starts X11+Openbox so users get a GUI immediately.
+# Installed systems override this setting to avoid X11 on serial-only setups.
+if [ -f "${TARGET_DIR}/etc/init.d/S60xorg" ]; then
+    sed -i 's/^AUTOSTART="no"/AUTOSTART="yes"/' "${TARGET_DIR}/etc/init.d/S60xorg"
+    echo "Post-build: Live mode enabled (X11 auto-start on tty1)"
+fi
+
 # --- Remove unnecessary files to save space ---
 rm -rf "${TARGET_DIR}/usr/man/" 2>/dev/null || true
 rm -rf "${TARGET_DIR}/usr/doc/" 2>/dev/null || true
@@ -83,12 +97,12 @@ find "${TARGET_DIR}" -name "*.la" -delete 2>/dev/null || true
 # --- Create /etc/issue with system info ---
 cat > "${TARGET_DIR}/etc/issue" << EOF
 ========================================
-  Vortex86 A9100 Embedded Linux
-  Architecture: i486-compatible
-  Kernel: Linux 5.10.x
-  C Library: musl
-  Package Manager: opkg
-  Window Manager: JWM (type 'startx')
+  Vortex86 A9100 Embedded Linux    Architecture: i486-compatible
+    Kernel: Linux 5.10.x
+    C Library: musl
+    Package Manager: opkg
+    Window Manager: Openbox (auto-start in live mode)
+    Installer: type 'vortex-install' to install to a device
 ========================================
 
 EOF

@@ -1,0 +1,620 @@
+#!/bin/sh
+#=============================================================================
+# vortex-install - Vortex86 A9100 OS Installer
+#
+# Guided installer for USB, CompactFlash, or IDE disk targets.
+# Runs from the live image to install the OS to a target device.
+#
+# Usage:
+#   vortex-install                    # Interactive guided install
+#   vortex-install --help             # Show this help
+#   vortex-install --list-devices     # List available target devices
+#
+# The installer will:
+#   1. Scan for target devices (USB, CF, IDE)
+#   2. Let you select a target
+#   3. Partition, format, and install the OS
+#   4. Configure bootloader (GRUB)
+#   5. Finalize the system configuration
+#=============================================================================
+
+set -e
+
+# Colors for output
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+CYAN='\033[1;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+#--- Helper functions --------------------------------------------------------
+
+info()  { printf "${GREEN}*${NC} %s\n" "$1"; }
+warn()  { printf "${YELLOW}WARN:${NC} %s\n" "$1"; }
+error() { printf "${RED}ERROR:${NC} %s\n" "$1"; }
+header(){ printf "\n${BLUE}=== %s ===${NC}\n" "$1"; }
+prompt(){ printf "${CYAN}?>${NC} ${BOLD}%s${NC} " "$1"; }
+
+# Confirm with [y/N]
+confirm() {
+    local msg="${1:-Continue}"
+    local resp
+    prompt "${msg} [y/N]"
+    read -r resp
+    case "$resp" in
+        y|Y|yes|Yes|YES) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Check prerequisites
+check_prereqs() {
+    local missing=""
+    for cmd in fdisk mkfs.ext2 mkfs.ext4 grub-install mount umount losetup dd sync sed; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing="$missing $cmd"
+        fi
+    done
+    if [ -n "$missing" ]; then
+        error "Missing required tools:$missing"
+        error "Run: opkg update && opkg install <package>"
+        exit 1
+    fi
+}
+
+#--- Detect target devices ---------------------------------------------------
+
+detect_devices() {
+    local devices=""
+    local dev size model removable
+
+    for dev in /sys/block/*; do
+        dev_name="${dev##*/}"
+
+        # Skip loop, ram, nbd, and the boot device
+        case "$dev_name" in
+            loop*|ram*|nbd*) continue ;;
+            *) ;;
+        esac
+
+        # Check if removable (USB, CF) OR an IDE/SATA disk
+        removable=$(cat "${dev}/removable" 2>/dev/null || echo 0)
+
+        # Read size in sectors (512 bytes)
+        size=$(cat "${dev}/size" 2>/dev/null || echo 0)
+        size_mb=$(( size / 2048 ))
+
+        # Skip devices smaller than 64MB (likely not a target)
+        [ "$size_mb" -lt 64 ] && continue
+
+        # Get the device model name
+        model=$(cat "${dev}/device/model" 2>/dev/null || echo "Unknown")
+        model="${model%"${model##*[![:space:]]}"}"  # trim trailing spaces
+
+        # Build description
+        if [ "$removable" = "1" ]; then
+            devices="${devices}${dev_name}:${model}:${size_mb}:removable\n"
+        else
+            # For non-removable, check if it's the boot device (sda = where we booted from)
+            # We'll let the user choose, but flag it
+            devices="${devices}${dev_name}:${model}:${size_mb}:fixed\n"
+        fi
+    done
+
+    echo -e "$devices" | sort
+}
+
+list_devices() {
+    header "Available Target Devices"
+    printf "  %-8s %-6s %-10s %s\n" "DEVICE" "TYPE" "SIZE" "MODEL"
+    printf "  %-8s %-6s %-10s %s\n" "------" "----" "----" "-----"
+
+    local devices
+    devices=$(detect_devices)
+
+    if [ -z "$devices" ]; then
+        warn "No suitable target devices found."
+        warn "Make sure a USB drive, CF card, or IDE disk is connected."
+        return 1
+    fi
+
+    echo "$devices" | while IFS=':' read -r dev model size_mb dtype; do
+        [ -z "$dev" ] && continue
+        if [ "$dtype" = "removable" ]; then
+            type_str="USB/CF"
+        else
+            type_str="IDE"
+        fi
+        printf "  ${BOLD}/dev/%-5s${NC} %-6s %-4sMB  %s\n" "$dev" "$type_str" "$size_mb" "$model"
+    done
+
+    return 0
+}
+
+select_device() {
+    local devices
+    devices=$(detect_devices)
+
+    if [ -z "$devices" ]; then
+        error "No target devices found."
+        error "Please insert a USB drive, CF card, or IDE disk and run again."
+        exit 1
+    fi
+
+    echo ""
+    info "Target device candidates:"
+    echo ""
+
+    local count=0
+    echo "$devices" | while IFS=':' read -r dev model size_mb dtype; do
+        [ -z "$dev" ] && continue
+        count=$((count + 1))
+        if [ "$dtype" = "removable" ]; then
+            type_str="USB/CF"
+        else
+            type_str="IDE"
+        fi
+        printf "  ${BOLD}%d)${NC} /dev/%-8s ${GREEN}%s${NC}  %s MB  %s\n" "$count" "$dev" "$type_str" "$size_mb" "$model"
+    done > /tmp/vortex-install-devices.txt
+
+    cat /tmp/vortex-install-devices.txt
+
+    local total
+    total=$(wc -l < /tmp/vortex-install-devices.txt)
+
+    echo ""
+    local choice
+    prompt "Select target device (1-${total})"
+    read -r choice
+
+    case "$choice" in
+        ''|*[!0-9]*) error "Invalid selection"; exit 1 ;;
+        *) if [ "$choice" -lt 1 ] || [ "$choice" -gt "$total" ]; then
+               error "Selection out of range (1-${total})"
+               exit 1
+           fi
+           ;;
+    esac
+
+    # Extract the device name from the selected line
+    local selected_line
+    selected_line=$(sed -n "${choice}p" /tmp/vortex-install-devices.txt)
+    local selected_dev
+    selected_dev=$(echo "$selected_line" | sed 's/.*\/dev\/\([^ ]*\).*/\1/')
+
+    echo "$selected_dev"
+    rm -f /tmp/vortex-install-devices.txt
+}
+
+#--- Partitioning ------------------------------------------------------------
+
+partition_device() {
+    local dev="$1"
+    local dev_path="/dev/${dev}"
+
+    warn "ALL DATA on ${dev_path} will be DESTROYED!"
+    if ! confirm "Partition ${dev_path}?"; then
+        info "Installation cancelled."
+        exit 0
+    fi
+
+    info "Partitioning ${dev_path}..."
+
+    # Create MBR partition table with:
+    #   p1: 50MB ext2 boot partition (set bootable)
+    #   p2: remaining space as root partition
+    #
+    # Using fdisk in script mode
+    fdisk "${dev_path}" > /dev/null 2>&1 << FDISKEOF
+o
+n
+p
+1
+2048
++50M
+a
+1
+n
+p
+2
+
+
+w
+FDISKEOF
+
+    # Wait for partition table to settle
+    sleep 1
+
+    # Ensure kernel sees the new partitions
+    partprobe "${dev_path}" 2>/dev/null || true
+    sleep 1
+
+    info "Partitioning complete."
+}
+
+#--- Formatting --------------------------------------------------------------
+
+format_partitions() {
+    local dev="$1"
+    local dev_path="/dev/${dev}"
+    local boot_part="${dev_path}1"
+    local root_part="${dev_path}2"
+
+    # Handle partition naming for different device types
+    case "$dev" in
+        mmcblk*|nvme*)
+            boot_part="${dev_path}p1"
+            root_part="${dev_path}p2"
+            ;;
+        sd*|hd*|vd*)
+            boot_part="${dev_path}1"
+            root_part="${dev_path}2"
+            ;;
+    esac
+
+    info "Formatting boot partition (${boot_part}) as ext2..."
+    mkfs.ext2 -L "vortex-boot" -F "${boot_part}" > /dev/null 2>&1 || {
+        error "Failed to format ${boot_part}"
+        exit 1
+    }
+
+    info "Formatting root partition (${root_part}) as ext4..."
+    mkfs.ext4 -L "vortex-root" -F "${root_part}" > /dev/null 2>&1 || {
+        error "Failed to format ${root_part}"
+        exit 1
+    }
+
+    echo "${boot_part}" > /tmp/vortex-install-boot-part
+    echo "${root_part}" > /tmp/vortex-install-root-part
+    echo "${dev_path}" > /tmp/vortex-install-dev
+}
+
+#--- Copy OS files -----------------------------------------------------------
+
+copy_os() {
+    local root_part="$1"
+    local mount_point="/mnt/target-root"
+
+    info "Mounting root partition..."
+    mkdir -p "${mount_point}"
+    mount "${root_part}" "${mount_point}" || {
+        error "Failed to mount root partition"
+        exit 1
+    }
+
+    info "Copying root filesystem (this may take a while)..."
+
+    # Copy everything from the live rootfs, excluding:
+    #   - /proc, /sys, /dev, /tmp, /run, /mnt (virtual filesystems)
+    #   - /var/lib/opkg/lists (can be re-downloaded)
+    #   - The install script's mount point
+    #
+    # Using rsync or tar+pipe for the copy
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -aHAX \
+            --exclude='/proc/*' \
+            --exclude='/sys/*' \
+            --exclude='/dev/*' \
+            --exclude='/tmp/*' \
+            --exclude='/run/*' \
+            --exclude='/mnt/*' \
+            --exclude='/var/lib/opkg/lists/*' \
+            --exclude='/home/*' \
+            / "${mount_point}/" 2>&1 | tail -5
+    else
+        # Fall back to tar
+        tar cf - \
+            --exclude='/proc/*' \
+            --exclude='/sys/*' \
+            --exclude='/dev/*' \
+            --exclude='/tmp/*' \
+            --exclude='/run/*' \
+            --exclude='/mnt/*' \
+            --exclude='/var/lib/opkg/lists/*' \
+            / 2>/dev/null | tar xf - -C "${mount_point}" 2>&1 | tail -3
+    fi
+
+    info "Root filesystem copied."
+
+    # Create required directories in target
+    mkdir -p "${mount_point}/proc"
+    mkdir -p "${mount_point}/sys"
+    mkdir -p "${mount_point}/dev"
+    mkdir -p "${mount_point}/tmp"
+    mkdir -p "${mount_point}/run"
+    mkdir -p "${mount_point}/mnt"
+    mkdir -p "${mount_point}/home"
+
+    echo "${mount_point}" > /tmp/vortex-install-mount
+}
+
+#--- Configure system --------------------------------------------------------
+
+configure_system() {
+    local mount_point="$1"
+    local boot_part="$2"
+    local root_part="$3"
+
+    info "Configuring installed system..."
+
+    # Create fstab
+    cat > "${mount_point}/etc/fstab" << FSTABEOF
+# /etc/fstab - Mount points for Vortex86 A9100 installed system
+#
+# <device>        <mount>     <type>  <options>               <dump> <pass>
+${root_part}      /           ext4    defaults,noatime        0       1
+${boot_part}      /boot       ext2    defaults,noatime        0       2
+proc              /proc       proc    defaults                0       0
+sysfs             /sys        sysfs   defaults                0       0
+devtmpfs          /dev        devtmpfs defaults               0       0
+FSTABEOF
+    info "fstab written."
+
+    # Update hostname
+    prompt "Set hostname for installed system [vortex-a9100]"
+    read -r hostname_resp
+    if [ -n "$hostname_resp" ]; then
+        echo "$hostname_resp" > "${mount_point}/etc/hostname"
+        # Update or create /etc/hosts
+        if [ -f "${mount_point}/etc/hosts" ]; then
+            sed -i "s/127.0.1.1.*/127.0.1.1\t${hostname_resp}/" "${mount_point}/etc/hosts" 2>/dev/null || true
+        fi
+        info "Hostname set to: ${hostname_resp}"
+    else
+        echo "vortex-a9100" > "${mount_point}/etc/hostname"
+    fi
+
+    # Set root password
+    echo ""
+    info "Set root password for the installed system."
+    warn "Leave empty for no password (serial console default)."
+    chroot "${mount_point}" /bin/passwd 2>&1 || true
+
+    # Configure network (copy current config)
+    if [ -f /etc/network/interfaces ]; then
+        cp /etc/network/interfaces "${mount_point}/etc/network/" 2>/dev/null || true
+        info "Network configuration copied."
+    fi
+}
+
+#--- Install GRUB bootloader -------------------------------------------------
+
+install_grub() {
+    local mount_point="$1"
+    local boot_part="$2"
+    local dev_path="$3"
+    local grub_target
+
+    info "Installing GRUB bootloader..."
+
+    # Mount boot partition
+    mkdir -p "${mount_point}/boot"
+    mount "${boot_part}" "${mount_point}/boot"
+
+    # Copy GRUB config if present on live system
+    if [ -f /boot/grub/grub.cfg ]; then
+        mkdir -p "${mount_point}/boot/grub"
+        cp /boot/grub/grub.cfg "${mount_point}/boot/grub/"
+    fi
+
+    # Determine GRUB target
+    # For i486-compatible Vortex86, we use i386-pc
+    if grub-install --target=i386-pc --version >/dev/null 2>&1; then
+        grub_target="i386-pc"
+    else
+        grub_target="i386-pc"  # default fallback
+    fi
+
+    # Install GRUB to the MBR of the target device
+    # We use --boot-directory so GRUB looks for its files in /boot on the root partition
+    mkdir -p "${mount_point}/boot/grub"
+    
+    # Install GRUB with required modules for ext2/4 and MBR
+    grub-install \
+        --target="${grub_target}" \
+        --boot-directory="${mount_point}/boot" \
+        --modules="part_msdos ext2" \
+        "${dev_path}" 2>&1 || {
+        warn "GRUB installation had issues. You may need to install GRUB manually."
+        warn "Run: grub-install --target=i386-pc --boot-directory=/boot ${dev_path}"
+    }
+
+    # Update GRUB config with the correct root device
+    local root_uuid
+    root_uuid=$(blkid -s UUID -o value "${root_part}" 2>/dev/null || echo "")
+    if [ -n "$root_uuid" ]; then
+        cat > "${mount_point}/boot/grub/grub.cfg" << GRUBEOF
+set default="0"
+set timeout="5"
+
+menuentry "Vortex86 A9100 Embedded Linux" {
+    set root=(hd0,msdos2)
+    search --no-floppy --fs-uuid --set=root ${root_uuid}
+    linux /boot/bzImage root=UUID=${root_uuid} ro console=tty0 console=ttyS0,115200n8 quiet
+    initrd /boot/initrd.img
+}
+GRUBEOF
+    else
+        cat > "${mount_point}/boot/grub/grub.cfg" << GRUBEOF
+set default="0"
+set timeout="5"
+
+menuentry "Vortex86 A9100 Embedded Linux" {
+    set root=(hd0,msdos2)
+    linux /boot/bzImage root=${root_part} ro console=tty0 console=ttyS0,115200n8 quiet
+}
+GRUBEOF
+    fi
+
+    info "GRUB bootloader installed."
+}
+
+#--- Cleanup -----------------------------------------------------------------
+
+cleanup() {
+    local mount_point mount_point_actual
+
+    mount_point_actual=$(cat /tmp/vortex-install-mount 2>/dev/null || echo "")
+
+    # Unmount boot partition first (mounted inside root)
+    if [ -f /tmp/vortex-install-boot-part ]; then
+        local boot_part
+        boot_part=$(cat /tmp/vortex-install-boot-part)
+        umount "${mount_point_actual}/boot" 2>/dev/null || true
+    fi
+
+    # Unmount root partition
+    if [ -n "$mount_point_actual" ] && mountpoint -q "${mount_point_actual}" 2>/dev/null; then
+        umount "${mount_point_actual}" 2>/dev/null || true
+    fi
+
+    rm -f /tmp/vortex-install-* 2>/dev/null || true
+
+    info "Cleaned up mount points."
+}
+
+#--- Main installer ----------------------------------------------------------
+
+main() {
+    case "${1:-}" in
+        --help|-h)
+            header "Vortex86 A9100 OS Installer"
+            echo ""
+            echo "Installs the Vortex86 A9100 Embedded Linux to a target device."
+            echo ""
+            echo "Usage:"
+            echo "  vortex-install                    Interactive guided install"
+            echo "  vortex-install --help             Show this help"
+            echo "  vortex-install --list-devices     List available target devices"
+            echo ""
+            echo "The installer will partition, format, and copy the OS to"
+            echo "a USB drive, CompactFlash card, or IDE disk."
+            exit 0
+            ;;
+        --list-devices)
+            list_devices
+            exit $?
+            ;;
+        "")
+            # Normal interactive install
+            ;;
+        *)
+            error "Unknown option: ${1}"
+            echo "Usage: vortex-install [--help|--list-devices]"
+            exit 1
+            ;;
+    esac
+
+    # Welcome
+    clear
+    header "Vortex86 A9100 OS Installer"
+    echo ""
+    info "Welcome to the Vortex86 A9100 installer."
+    info "This will guide you through installing the OS to a USB drive,"
+    info "CompactFlash card, or IDE disk."
+    echo ""
+
+    # Must be root for partitioning, formatting, mounting, grub-install
+    if [ "$(id -u)" -ne 0 ]; then
+        error "This installer must be run as root."
+        error "Run: sudo vortex-install"
+        exit 1
+    fi
+
+    # Check prerequisites
+    check_prereqs
+
+    # Warn if running on an already-installed system
+    if [ -f /etc/vortex-installed ] || mountpoint -q /boot 2>/dev/null; then
+        warn "It looks like this system is already installed to a device."
+        warn "Running the installer from an installed system could cause issues."
+        if ! confirm "Continue anyway?"; then
+            exit 0
+        fi
+    fi
+
+    # Step 1: Select target device
+    header "Step 1: Select Target Device"
+    echo ""
+    local target_dev
+    target_dev=$(select_device)
+    echo ""
+    info "Selected target: ${BOLD}/dev/${target_dev}${NC}"
+
+    # Step 2: Partition
+    header "Step 2: Partition Target Device"
+    partition_device "${target_dev}"
+
+    # Step 3: Format
+    header "Step 3: Format Partitions"
+    format_partitions "${target_dev}"
+
+    local boot_part root_part dev_path
+    boot_part=$(cat /tmp/vortex-install-boot-part)
+    root_part=$(cat /tmp/vortex-install-root-part)
+    dev_path=$(cat /tmp/vortex-install-dev)
+
+    echo ""
+    info "Boot partition:  ${boot_part}"
+    info "Root partition:  ${root_part}"
+    echo ""
+
+    if ! confirm "Proceed with installation?"; then
+        info "Installation cancelled."
+        cleanup
+        exit 0
+    fi
+
+    # Step 4: Copy OS
+    header "Step 4: Copying Root Filesystem"
+    copy_os "${root_part}"
+
+    # Step 5: Install GRUB
+    header "Step 5: Installing Bootloader"
+    install_grub "$(cat /tmp/vortex-install-mount)" "${boot_part}" "${dev_path}"
+
+    # Step 6: Configure
+    header "Step 6: System Configuration"
+    configure_system "$(cat /tmp/vortex-install-mount)" "${boot_part}" "${root_part}"
+
+    # Step 7: Disable live-mode X11 autostart on installed system
+    sed -i 's/AUTOSTART="yes"/AUTOSTART="no"/' "$(cat /tmp/vortex-install-mount)/etc/init.d/S60xorg" 2>/dev/null || true
+    sed -i 's/^AUTOSTART="yes"/AUTOSTART="no"/' "$(cat /tmp/vortex-install-mount)/etc/init.d/S60xorg" 2>/dev/null || true
+    info "X11 autostart disabled on installed system (type 'startx' to launch)."
+
+    # Create marker
+    touch "$(cat /tmp/vortex-install-mount)/etc/vortex-installed"
+
+    # Step 8: Cleanup
+    header "Step 8: Cleanup"
+    sync
+    cleanup
+
+    # Done
+    header "Installation Complete!"
+    echo ""
+    info "The OS has been installed to ${dev_path}."
+    echo ""
+    info "To boot from the installed system:"
+    echo "  1. Power off the system"
+    echo "  2. Remove the live media"
+    echo "  3. Boot from the target device (${dev_path})"
+    echo ""
+    info "Default login: root (no password, or the password you set)"
+    echo ""
+
+    if confirm "Reboot now?"; then
+        info "Rebooting..."
+        reboot
+    else
+        info "You can reboot later with: reboot"
+    fi
+}
+
+# Trap cleanup on exit
+trap cleanup EXIT
+
+# Run main
+main "$@"
