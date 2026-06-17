@@ -44,48 +44,73 @@ dd if=/dev/zero of="${IMAGES_DIR}/${IMAGE_NAME}" bs=1M count=${IMAGE_SIZE_MB} st
 echo "  Partitioning..."
 ROOTFS_IMAGE="${IMAGES_DIR}/rootfs.ext2"
 
-# Create a single partition
-fdisk "${IMAGES_DIR}/${IMAGE_NAME}" << EOF
+# Calculate partition boundaries
+BOOT_START=2048
+BOOT_SIZE_SECTORS=$((BOOT_PART_SIZE_MB * 2048))
+BOOT_END=$((BOOT_START + BOOT_SIZE_SECTORS - 1))
+ROOT_START=$((BOOT_END + 1))
+
+# Create MBR partition table with fdisk
+#   p1: ${BOOT_PART_SIZE_MB}MB ext2 boot partition (bootable)
+#   p2: remaining space as root partition
+fdisk "${IMAGES_DIR}/${IMAGE_NAME}" << FDISKEOF
 o
 n
 p
 1
-2048
+${BOOT_START}
 +${BOOT_PART_SIZE_MB}M
 a
+1
 n
 p
 2
+${ROOT_START}
 
-t
-2
-83
 w
-EOF
+FDISKEOF
 
-# Map the image to loopback device
-LOOP_DEV=$(sudo losetup -f --show "${IMAGES_DIR}/${IMAGE_NAME}")
-sudo partprobe "${LOOP_DEV}" 2>/dev/null || true
-
-# Wait for partitions to appear
+# Map the image to loopback device with partition scan
+LOOP_DEV=$(sudo losetup -f -P --show "${IMAGES_DIR}/${IMAGE_NAME}")
 sleep 1
+
+# Determine partition device names
+case "${LOOP_DEV}" in
+    /dev/loop*)
+        BOOT_PART="${LOOP_DEV}p1"
+        ROOT_PART="${LOOP_DEV}p2"
+        ;;
+    *)
+        BOOT_PART="${LOOP_DEV}1"
+        ROOT_PART="${LOOP_DEV}2"
+        ;;
+esac
+
+# Verify partition devices exist
+if [ ! -e "${BOOT_PART}" ]; then
+    echo "WARNING: ${BOOT_PART} not found, trying kpartx..."
+    sudo kpartx -a "${LOOP_DEV}" 2>/dev/null || true
+    sleep 1
+    BOOT_PART="/dev/mapper/$(basename ${LOOP_DEV})p1"
+    ROOT_PART="/dev/mapper/$(basename ${LOOP_DEV})p2"
+fi
 
 # Format the first partition as ext2 for /boot
 echo "  Formatting boot partition..."
-sudo mkfs.ext2 -L "vortex-boot" "${LOOP_DEV}p1" 2>/dev/null || \
-sudo mkfs.ext2 -L "vortex-boot" "${LOOP_DEV}p1"
+sudo mkfs.ext2 -L "vortex-boot" -F "${BOOT_PART}" 2>/dev/null || \
+sudo mkfs.ext2 -L "vortex-boot" -F "${BOOT_PART}"
 
 # Format the second partition as ext4 for root
 echo "  Formatting root partition..."
-sudo mkfs.ext4 -L "vortex-root" "${LOOP_DEV}p2" 2>/dev/null || \
-sudo mkfs.ext4 -L "vortex-root" "${LOOP_DEV}p2"
+sudo mkfs.ext4 -L "vortex-root" -F "${ROOT_PART}" 2>/dev/null || \
+sudo mkfs.ext4 -L "vortex-root" -F "${ROOT_PART}"
 
 # Mount partitions and copy files
 echo "  Copying rootfs..."
 MOUNT_DIR=$(mktemp -d)
 
 # Mount boot partition
-sudo mount "${LOOP_DEV}p1" "${MOUNT_DIR}"
+sudo mount "${BOOT_PART}" "${MOUNT_DIR}"
 sudo mkdir -p "${MOUNT_DIR}/boot"
 
 # Copy kernel
@@ -107,7 +132,7 @@ sudo umount "${MOUNT_DIR}"
 
 # Mount root partition and copy rootfs
 echo "  Copying root filesystem..."
-sudo mount "${LOOP_DEV}p2" "${MOUNT_DIR}"
+sudo mount "${ROOT_PART}" "${MOUNT_DIR}"
 
 if [ -f "${IMAGES_DIR}/rootfs.ext2" ]; then
     # Extract rootfs from the ext2 image
