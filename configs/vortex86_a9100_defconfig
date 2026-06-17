@@ -30,7 +30,7 @@ BR2_GLOBAL_PATCH_DIR="board/dmp/vortex86_a9100/patches"
 
 # Bootloader
 BR2_TARGET_GRUB2=y
-BR2_TARGET_GRUB2_BUILTIN_MODULES_PC="bios part_msdos ext2 fat"
+BR2_TARGET_GRUB2_BUILTIN_MODULES_PC="biosdisk part_msdos ext2 fat"
 BR2_TARGET_GRUB2_INSTALL_TOOLS=y
 
 # Filesystem images
