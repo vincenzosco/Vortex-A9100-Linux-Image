@@ -96,9 +96,12 @@ if [ ! -e "${BOOT_PART}" ]; then
 fi
 
 # Format the first partition as ext2 for /boot
-echo "  Formatting boot partition..."
-sudo mkfs.ext2 -L "vortex-boot" -F "${BOOT_PART}" 2>/dev/null || \
-sudo mkfs.ext2 -L "vortex-boot" -F "${BOOT_PART}"
+# NOTE: Disable modern ext2 features that GRUB's ext2 module doesn't support.
+# GRUB 2's ext2 module predates metadata_csum, 64bit, dir_index, etc.
+# Without these flags, GRUB produces 'chunk error' while reading large files.
+echo "  Formatting boot partition (GRUB-compatible ext2)..."
+sudo mkfs.ext2 -L "vortex-boot" -F -O ^metadata_csum,^64bit,^dir_index,^extents,^flex_bg,^resize_inode "${BOOT_PART}" 2>/dev/null || \
+sudo mkfs.ext2 -L "vortex-boot" -F -O ^metadata_csum,^64bit,^dir_index,^extents,^flex_bg,^resize_inode "${BOOT_PART}"
 
 # Format the second partition as ext4 for root
 echo "  Formatting root partition..."
